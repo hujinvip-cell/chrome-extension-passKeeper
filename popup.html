@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>PassKeeper</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <button id="open-manager" class="header-manager-btn" title="打开账号管理后台">
+                    <div class="header-icon">
+                        <img src="icons/icon48.png" alt="icon" width="28" height="28">
+                    </div>
+                    <div class="header-text">
+                        <h3>PassKeeper</h3>
+                        <div class="subtitle">当前: <span id="actual-domain">获取中...</span></div>
+                    </div>
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <!-- 共享域名管理卡片 -->
+            <div class="shared-domains-card">
+                <div class="shared-domains-header">
+                    <span class="shared-domains-title">🔗 共享域名</span>
+                    <span class="shared-domains-hint">其他域名将使用这组账号</span>
+                </div>
+                <div id="domain-chips" class="domain-chips"></div>
+                <div class="domain-add-row">
+                    <input type="text" id="input-new-domain" class="domain-add-input"
+                        placeholder="输入域名或地址，按 Enter 添加">
+                </div>
+            </div>
+
+            <div id="account-list" class="account-list"></div>
+
+            <div class="add-form-container">
+                <button id="toggle-add-form" class="btn-secondary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:middle;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    新增账号
+                </button>
+                <div id="add-form" class="hidden form-group" style="margin-top:8px;">
+                    <input type="text" id="input-username" placeholder="用户名 / 账号" required>
+                    <input type="password" id="input-password" placeholder="密码" required>
+                    <input type="text" id="input-remark" placeholder="备注（可选）">
+                    <div class="form-actions">
+                        <button id="btn-cancel" class="btn-text">取消</button>
+                        <button id="btn-save" class="btn-primary">保存</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 测试填充工具 -->
+            <div class="test-fill-card">
+                <div class="test-fill-row">
+                    <div class="test-fill-info">
+                        <span class="test-fill-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>
+                            一键填充测试数据
+                        </span>
+                        <span class="test-fill-hint">自动识别并填充页面所有表单字段</span>
+                    </div>
+                    <button id="btn-test-fill" class="btn-test-fill">填充</button>
+                </div>
+                <div id="test-fill-result" class="test-fill-result hidden"></div>
+            </div>
+
+            <div class="settings-section">
+                <details id="settings-details">
+                    <summary>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        模型设置
+                    </summary>
+
+                    <!-- 当前激活模型 -->
+                    <div class="setting-item">
+                        <label for="select-active-model">当前使用</label>
+                        <div class="active-model-row">
+                            <select id="select-active-model" class="model-select"></select>
+                        </div>
+                    </div>
+
+                    <!-- 模型列表 -->
+                    <div id="model-config-list" class="model-config-list"></div>
+
+                    <!-- 新增按钮 -->
+                    <button id="btn-add-model-cfg" class="btn-add-model">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:middle;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        添加模型配置
+                    </button>
+
+                    <!-- 新增/编辑表单 -->
+                    <div id="model-cfg-form" class="model-cfg-form hidden">
+                        <div class="mcf-row">
+                            <label>名称</label>
+                            <input type="text" id="mcf-name" placeholder="如: 本地 Qwen3">
+                        </div>
+                        <div class="mcf-row">
+                            <label>类型</label>
+                            <select id="mcf-type">
+                                <option value="ollama">Ollama（本地）</option>
+                                <option value="gemini">Gemini API</option>
+                                <option value="openai">OpenAI-compatible</option>
+                            </select>
+                        </div>
+                        <!-- Ollama 专属 -->
+                        <div class="mcf-row mcf-ollama">
+                            <label>地址</label>
+                            <input type="text" id="mcf-base-url" placeholder="http://localhost:11434">
+                        </div>
+                        <!-- Gemini / OpenAI 专属 -->
+                        <div class="mcf-row mcf-api-key hidden">
+                            <label>API Key</label>
+                            <input type="password" id="mcf-api-key" placeholder="sk-... 或 AIza...">
+                        </div>
+                        <!-- OpenAI 专属 -->
+                        <div class="mcf-row mcf-openai hidden">
+                            <label>Base URL</label>
+                            <input type="text" id="mcf-openai-url" placeholder="https://api.openai.com">
+                        </div>
+                        <div class="mcf-row">
+                            <label>模型名</label>
+                            <input type="text" id="mcf-model" placeholder="如: qwen3-vl:8b">
+                        </div>
+                        <div class="mcf-actions">
+                            <button id="mcf-cancel" class="btn-text">取消</button>
+                            <button id="mcf-save"   class="btn-primary">保存</button>
+                        </div>
+                    </div>
+                </details>
+            </div>
+        </main>
+    </div>
+    <script src="crypto.js"></script>
+    <script src="popup.js"></script>
+</body>
+</html>

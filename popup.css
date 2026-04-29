@@ -1,0 +1,961 @@
+/* =============================================
+   Google Material Design 3 (Material You)
+   Chrome Extension Popup
+   ============================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600&family=Roboto:wght@400;500&display=swap');
+
+/* ---- Design Tokens ---- */
+:root {
+    --md-primary: #1a73e8;
+    --md-primary-hover: #1557b0;
+    --md-primary-container: #d3e3fd;
+    --md-secondary: #fbbc04;
+    --md-secondary-hover: #e8a800;
+    --md-error: #d93025;
+    --md-error-container: #fce8e6;
+    --md-surface: #fff;
+    --md-surface-variant: #f1f3f4;
+    --md-outline: #dadce0;
+    --md-outline-focus: #1a73e8;
+    --md-on-surface: #202124;
+    --md-on-surface-variant: #5f6368;
+    --md-on-primary: #fff;
+    --md-shadow-1: 0 1px 2px rgba(60,64,67,.3), 0 1px 3px rgba(60,64,67,.15);
+    --md-shadow-2: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px rgba(60,64,67,.15);
+    --md-radius: 8px;
+    --md-radius-lg: 12px;
+    --md-radius-xl: 16px;
+    --md-font: 'Google Sans', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* ---- Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: var(--md-font);
+    width: 360px;
+    background: var(--md-surface-variant);
+    color: var(--md-on-surface);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* ---- Layout ---- */
+.container {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+}
+
+/* ---- Header ---- */
+header {
+    background: var(--md-surface);
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--md-outline);
+}
+
+.header-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.header-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--md-primary-container);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.header-text h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--md-on-surface);
+    letter-spacing: 0.1px;
+}
+
+.header-text .subtitle {
+    font-size: 11px;
+    color: var(--md-on-surface-variant);
+    margin-top: 1px;
+}
+
+.domain-chip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.domain-group-section {
+    margin-top: 10px;
+}
+
+.domain-group-label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.75);
+    margin-bottom: 6px;
+}
+
+/* ── 共享域名卡片（在 main 里，浅色背景）── */
+.shared-domains-card {
+    background: var(--md-surface);
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius-lg);
+    padding: 10px 12px;
+    margin-bottom: 4px;
+}
+
+.shared-domains-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.shared-domains-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--md-on-surface);
+}
+
+.shared-domains-hint {
+    font-size: 11px;
+    color: var(--md-on-surface-variant);
+}
+
+.domain-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.chip-empty {
+    font-size: 11px;
+    color: var(--md-on-surface-variant);
+    font-style: italic;
+}
+
+.domain-chip-row-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--md-surface-variant);
+    border: 1px solid var(--md-outline);
+    border-radius: 6px;
+    padding: 4px 6px 4px 10px;
+    min-height: 28px;
+}
+
+.chip-label {
+    flex: 1;
+    font-size: 12px;
+    color: var(--md-on-surface);
+    cursor: pointer;
+    border-bottom: 1px dashed var(--md-outline);
+    line-height: 1.5;
+    min-width: 0;
+    word-break: break-all;
+}
+
+.chip-label:hover {
+    border-bottom-color: var(--md-primary);
+    color: var(--md-primary);
+}
+
+.chip-inline-input {
+    flex: 1;
+    background: var(--md-surface);
+    border: 1px solid var(--md-outline-focus);
+    border-radius: 4px;
+    color: var(--md-on-surface);
+    font-size: 12px;
+    padding: 1px 6px;
+    outline: none;
+    min-width: 0;
+    box-shadow: 0 0 0 2px rgba(26,115,232,0.15);
+}
+
+.chip-btn {
+    flex: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 3px 5px;
+    font-size: 12px;
+    border-radius: 4px;
+    color: var(--md-on-surface-variant);
+    transition: background 0.15s, color 0.15s;
+    line-height: 1;
+}
+
+.chip-btn:hover { background: var(--md-surface-variant); }
+
+.chip-remove-btn:hover {
+    background: #fce8e6;
+    color: var(--md-error);
+}
+
+.chip-edit-btn:hover {
+    background: var(--md-primary-container);
+    color: var(--md-primary);
+}
+
+.domain-add-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.domain-add-input {
+    width: 100%;
+    border: 1px solid var(--md-outline);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-family: var(--md-font);
+    color: var(--md-on-surface);
+    background: var(--md-surface-variant);
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.domain-add-input:focus {
+    border-color: var(--md-outline-focus);
+    background: var(--md-surface);
+    box-shadow: 0 0 0 2px rgba(26,115,232,0.15);
+}
+
+.domain-chip-label {
+    font-size: 11px;
+    color: var(--md-on-surface-variant);
+    white-space: nowrap;
+}
+
+.domain-input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--md-outline);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-family: var(--md-font);
+    color: var(--md-on-surface);
+    background: var(--md-surface-variant);
+    outline: none;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.domain-input:focus {
+    border-color: var(--md-outline-focus);
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(26,115,232,0.15);
+}
+
+/* ---- Main ---- */
+main {
+    padding: 12px 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* ---- Section Label ---- */
+.section-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--md-primary);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 0 4px;
+    margin-bottom: -2px;
+}
+
+/* ---- Account List ---- */
+.account-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 260px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.account-list::-webkit-scrollbar { width: 4px; }
+.account-list::-webkit-scrollbar-track { background: transparent; }
+.account-list::-webkit-scrollbar-thumb { background: var(--md-outline); border-radius: 4px; }
+
+.account-item {
+    background: var(--md-surface);
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius);
+    padding: 6px 6px 6px 12px;
+    cursor: default;
+    position: relative;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.account-item:hover {
+    box-shadow: var(--md-shadow-1);
+    border-color: #c5cae9;
+}
+
+.account-item.loading {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+/* 单行：用户名 + 图标按钮排一行 */
+.account-row-main {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.account-username {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--md-on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 备注第二行，小字、灰色、左对齐 */
+.account-remark {
+    font-size: 10px;
+    color: var(--md-on-surface-variant);
+    margin-top: 1px;
+    padding-left: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 操作按钮区 */
+.account-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+/* ---- Buttons ---- */
+/* MD3: Filled button */
+.btn-login {
+    flex: 1;
+    background: var(--md-primary);
+    color: var(--md-on-primary);
+    border: none;
+    padding: 0 10px;
+    height: 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--md-font);
+    font-weight: 500;
+    letter-spacing: 0.1px;
+    transition: box-shadow 0.2s, background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.btn-login:hover {
+    background: var(--md-primary-hover);
+    box-shadow: var(--md-shadow-1);
+}
+
+.btn-login:disabled, .btn-fill:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 填充、填充并登录图标按钮（与编辑/删除相同尺寸） */
+.btn-act {
+    flex: none;
+    background: transparent;
+    border: none;
+    width: 28px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+    padding: 0;
+    color: var(--md-on-surface-variant);
+}
+
+.btn-act.btn-login:hover {
+    background: #e6f4ea;
+    color: #1e8e3e;
+}
+
+.btn-act:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* MD3: Icon button (edit/delete) */
+.btn-edit, .btn-delete {
+    flex: none;
+    background: transparent;
+    color: var(--md-on-surface-variant);
+    border: none;
+    width: 28px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+    padding: 0;
+}
+
+.btn-edit:hover {
+    background: var(--md-primary-container);
+    color: var(--md-primary);
+}
+
+.btn-delete:hover {
+    background: var(--md-error-container);
+    color: var(--md-error);
+}
+
+/* MD3: Tonal button */
+.btn-fill {
+    flex: 1;
+    border: none;
+    padding: 0 10px;
+    height: 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--md-font);
+    font-weight: 500;
+    letter-spacing: 0.1px;
+    transition: box-shadow 0.2s, background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.btn-fill:hover {
+    background: #c6d8fb;
+    box-shadow: var(--md-shadow-1);
+}
+
+.btn-fill:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* MD3: Text / Icon button */
+.btn-delete {
+    flex: none;
+    background: transparent;
+    color: var(--md-on-surface-variant);
+    border: none;
+    width: 32px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+}
+
+.btn-delete:hover {
+    background: var(--md-error-container);
+    color: var(--md-error);
+}
+
+/* Loading spinner inside buttons */
+/* Loading 状态：作用于所有操作图标按钮 */
+.account-item.loading .btn-act,
+.account-item.loading .btn-fill,
+.account-item.loading .btn-login {
+    position: relative;
+}
+
+.account-item.loading .btn-act svg,
+.account-item.loading .btn-fill svg,
+.account-item.loading .btn-login svg {
+    opacity: 0; /* 隐藏图标，显示 spinner */
+}
+
+.account-item.loading .btn-act::after,
+.account-item.loading .btn-fill::after,
+.account-item.loading .btn-login::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(0,0,0,0.15);
+    border-top-color: var(--md-primary);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Add Form ---- */
+.add-form-container { }
+
+/* MD3: Outlined button */
+.btn-secondary {
+    width: 100%;
+    background: transparent;
+    color: var(--md-primary);
+    border: 1px solid var(--md-outline);
+    padding: 0 16px;
+    height: 36px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--md-font);
+    font-weight: 500;
+    letter-spacing: 0.1px;
+    transition: background 0.2s, border-color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.btn-secondary:hover {
+    background: var(--md-primary-container);
+    border-color: var(--md-primary);
+}
+
+/* ── 测试填充卡片 ── */
+.test-fill-card {
+    background: var(--md-surface);
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius-lg);
+    padding: 10px 12px;
+}
+
+.test-fill-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.test-fill-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.test-fill-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--md-on-surface);
+    display: flex;
+    align-items: center;
+}
+
+.test-fill-hint {
+    font-size: 11px;
+    color: var(--md-on-surface-variant);
+}
+
+.btn-test-fill {
+    flex: none;
+    background: var(--md-primary);
+    color: var(--md-on-primary);
+    border: none;
+    border-radius: 20px;
+    padding: 0 14px;
+    height: 28px;
+    font-size: 12px;
+    font-family: var(--md-font);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+    white-space: nowrap;
+}
+
+.btn-test-fill:hover {
+    background: var(--md-primary-hover);
+    box-shadow: var(--md-shadow-1);
+}
+
+.btn-test-fill:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.test-fill-result {
+    font-size: 11px;
+    color: var(--md-on-surface-variant);
+    margin-top: 6px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    background: var(--md-surface-variant);
+}
+
+.test-fill-result.error {
+    color: var(--md-error);
+    background: var(--md-error-container);
+}
+
+.test-fill-result.hidden { display: none; }
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--md-surface);
+    padding: 14px;
+    border-radius: var(--md-radius-lg);
+    border: 1px solid var(--md-outline);
+}
+
+/* MD3: Outlined text field */
+input:not([type="submit"]) {
+    width: 100%;
+    padding: 9px 14px;
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius);
+    font-size: 13px;
+    font-family: var(--md-font);
+    color: var(--md-on-surface);
+    background: var(--md-surface);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input:not([type="submit"]):focus {
+    border-color: var(--md-outline-focus);
+    box-shadow: 0 0 0 2px rgba(26,115,232,0.18);
+}
+
+.form-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    justify-content: flex-end;
+}
+
+/* MD3: Filled button (save) */
+.btn-primary {
+    background: var(--md-primary);
+    color: var(--md-on-primary);
+    border: none;
+    padding: 0 20px;
+    height: 36px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--md-font);
+    font-weight: 500;
+    transition: background 0.2s, box-shadow 0.2s;
+}
+
+.btn-primary:hover {
+    background: var(--md-primary-hover);
+    box-shadow: var(--md-shadow-1);
+}
+
+.btn-text {
+    background: transparent;
+    border: none;
+    color: var(--md-primary);
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--md-font);
+    font-weight: 500;
+    padding: 0 12px;
+    height: 36px;
+    border-radius: 20px;
+    transition: background 0.2s;
+}
+
+.btn-text:hover { background: var(--md-primary-container); }
+
+/* ---- Settings ---- */
+.settings-section {
+    margin-top: 4px;
+    border-top: 1px solid var(--md-outline);
+    padding-top: 8px;
+}
+
+details summary {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--md-on-surface-variant);
+    cursor: pointer;
+    outline: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 2px;
+    border-radius: 4px;
+    user-select: none;
+}
+
+details summary::before {
+    content: '▸';
+    font-size: 10px;
+    transition: transform 0.2s;
+    display: inline-block;
+}
+
+details[open] summary::before { transform: rotate(90deg); }
+
+.setting-item {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.setting-item label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--md-on-surface-variant);
+}
+
+/* MD3: Small filled tonal button */
+.btn-small {
+    background: var(--md-primary-container);
+    color: var(--md-primary);
+    border: none;
+    padding: 6px 14px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--md-font);
+    font-weight: 500;
+    align-self: flex-start;
+    transition: background 0.2s;
+}
+
+.btn-small:hover { background: #c6d8fb; }
+
+/* ---- Utility ---- */
+.hidden { display: none !important; }
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    padding: 20px 0 10px;
+    color: var(--md-on-surface-variant);
+    font-size: 13px;
+}
+
+.empty-state .empty-icon {
+    font-size: 28px;
+    margin-bottom: 6px;
+    opacity: 0.5;
+}
+
+/* ── 模型管理 UI ── */
+.active-model-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.model-select {
+    flex: 1;
+    padding: 5px 8px;
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius);
+    font-size: 12px;
+    font-family: var(--md-font);
+    background: var(--md-surface);
+    color: var(--md-on-surface);
+    cursor: pointer;
+}
+
+.model-config-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.mcl-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius);
+    background: var(--md-surface);
+    transition: border-color 0.15s;
+}
+
+.mcl-row.mcl-active {
+    border-color: var(--md-primary);
+    background: var(--md-primary-container);
+}
+
+.mcl-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.mcl-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--md-on-surface);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mcl-type {
+    font-size: 10px;
+    color: var(--md-on-surface-variant);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mcl-btns {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.mcl-btn {
+    background: transparent;
+    border: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--md-on-surface-variant);
+    padding: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.mcl-btn:hover { background: var(--md-surface-variant); }
+.mcl-btn.mcl-del:hover { background: var(--md-error-container); color: var(--md-error); }
+
+.btn-add-model {
+    margin-top: 8px;
+    width: 100%;
+    background: transparent;
+    border: 1px dashed var(--md-outline);
+    border-radius: var(--md-radius);
+    padding: 6px;
+    font-size: 12px;
+    font-family: var(--md-font);
+    color: var(--md-on-surface-variant);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+    box-sizing: border-box;
+}
+
+.btn-add-model:hover {
+    border-color: var(--md-primary);
+    color: var(--md-primary);
+    background: var(--md-primary-container);
+}
+
+.model-cfg-form {
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius-lg);
+    background: var(--md-surface);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.mcf-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.mcf-row label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--md-on-surface-variant);
+}
+
+.mcf-row input, .mcf-row select {
+    padding: 5px 8px;
+    border: 1px solid var(--md-outline);
+    border-radius: var(--md-radius);
+    font-size: 12px;
+    font-family: var(--md-font);
+    background: var(--md-surface);
+    color: var(--md-on-surface);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.mcf-row input:focus, .mcf-row select:focus {
+    outline: none;
+    border-color: var(--md-primary);
+    box-shadow: 0 0 0 2px var(--md-primary-container);
+}
+
+.mcf-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+    padding-top: 2px;
+}
+
+/* ── Header 管理后台按钮 ── */
+.header-manager-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: transparent;
+    border: none;
+    padding: 4px 8px 4px 0;
+    border-radius: var(--md-radius);
+    cursor: pointer;
+    transition: background 0.18s;
+    text-align: left;
+    width: 100%;
+}
+
+.header-manager-btn:hover {
+    background: var(--md-primary-container);
+}
+
+.header-manager-btn:hover .header-text h3 {
+    color: var(--md-primary);
+}
+
+.header-manager-btn:active {
+    background: #c6d8fb;
+}

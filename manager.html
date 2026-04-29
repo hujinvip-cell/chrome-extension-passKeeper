@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>账号管理 — PassKeeper</title>
+    <link rel="stylesheet" href="manager.css">
+</head>
+<body>
+    <div class="app">
+        <!-- 顶部导航栏 -->
+        <header class="topbar">
+            <div class="topbar-brand">
+                <img src="icons/icon48.png" alt="icon" width="32" height="32" class="brand-icon">
+                <div class="brand-text">
+                    <span class="brand-title">PassKeeper</span>
+                    <span class="brand-sub">账号管理中心</span>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-stats" id="stats-bar">
+                    <span class="stat-item"><span class="stat-num" id="stat-domains">0</span> 个域名</span>
+                    <span class="stat-divider">·</span>
+                    <span class="stat-item"><span class="stat-num" id="stat-accounts">0</span> 个账号</span>
+                </div>
+                <button id="btn-auth-setup" class="btn-auth-setup" title="安全验证设置">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                </button>
+                <button id="btn-theme" class="btn-theme" title="切换主题" aria-label="切换亮/暗主题">
+                    <!-- 图标由 JS 动态填充 -->
+                </button>
+            </div>
+        </header>
+
+        <!-- 搜索栏 -->
+        <div class="search-wrap">
+            <div class="search-box">
+                <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="search-input" class="search-input"
+                       placeholder="按域名、用户名或备注搜索…" autocomplete="off" spellcheck="false">
+                <button id="search-clear" class="search-clear hidden" title="清除">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                         viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2.2" stroke-linecap="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <div id="account-table-wrap">
+                <!-- 表头 -->
+                <div class="table-header">
+                    <div class="col col-domain">域名</div>
+                    <div class="col col-username">用户名</div>
+                    <div class="col col-password">密码</div>
+                    <div class="col col-remark">备注</div>
+                    <div class="col col-actions">操作</div>
+                </div>
+                <!-- 数据行容器 -->
+                <div id="table-body" class="table-body"></div>
+            </div>
+
+            <!-- 空状态 -->
+            <div id="empty-state" class="empty-state hidden">
+                <div class="empty-icon">🔐</div>
+                <div class="empty-title">暂无账号数据</div>
+                <div class="empty-hint">在浏览器弹窗中新增账号后，此处将显示所有已保存的凭据。</div>
+            </div>
+
+            <!-- 搜索无结果 -->
+            <div id="no-result" class="empty-state hidden">
+                <div class="empty-icon">🔍</div>
+                <div class="empty-title">未找到匹配结果</div>
+                <div class="empty-hint">请尝试其他关键词。</div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 安全验证设置对话框 -->
+    <div id="auth-setup-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>🔒 安全验证设置</h3>
+                <button id="auth-setup-close" class="modal-close" title="关闭">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p id="auth-status-text" class="auth-status">检测中…</p>
+                <div id="auth-webauthn-section">
+                    <button id="btn-register-webauthn" class="btn-auth-action">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 11c0 1.66-1.34 3-3 3s-3-1.34-3-3 1.34-3 3-3 3 1.34 3 3z"/>
+                            <path d="M2 12s3-7 9-7 9 7 9 7-3 7-9 7-9-7-9-7z" opacity="0.4"/>
+                        </svg>
+                        注册生物识别验证
+                    </button>
+                    <p class="auth-hint">使用 Touch ID / Windows Hello / 系统密码保护您的密码</p>
+                </div>
+                <div id="auth-masterpw-section" class="auth-fallback-section">
+                    <p class="auth-divider-text">或设置主密码（作为备选方案）</p>
+                    <div class="auth-masterpw-form">
+                        <input type="password" id="auth-masterpw-input" placeholder="输入主密码" autocomplete="new-password">
+                        <input type="password" id="auth-masterpw-confirm" placeholder="确认主密码" autocomplete="new-password">
+                        <button id="btn-set-masterpw" class="btn-auth-secondary">设置主密码</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主密码验证对话框（查看密码时弹出）-->
+    <div id="masterpw-verify-modal" class="modal-overlay hidden">
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h3>🔐 验证身份</h3>
+            </div>
+            <div class="modal-body">
+                <p>请输入主密码以查看密码</p>
+                <input type="password" id="masterpw-verify-input" placeholder="主密码" autocomplete="current-password">
+                <div class="modal-actions">
+                    <button id="masterpw-verify-cancel" class="btn-text">取消</button>
+                    <button id="masterpw-verify-ok" class="btn-primary">确认</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="crypto.js"></script>
+    <script src="auth.js"></script>
+    <script src="manager.js"></script>
+</body>
+</html>
