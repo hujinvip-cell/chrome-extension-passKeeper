@@ -117,6 +117,17 @@
                         <button id="btn-set-masterpw" class="btn-auth-secondary">设置主密码</button>
                     </div>
                 </div>
+                <div class="auth-divider-text" style="margin-top: 24px; text-align: left; opacity: 1;">高级安全</div>
+                <div class="auth-setting-item">
+                    <div class="setting-info">
+                        <h4>高防模式（防控制台嗅探）</h4>
+                        <p>开启后，如果检测到开发者工具被打开，将立即锁定并销毁内存密钥。</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-anti-snoop">
+                        <span class="slider"></span>
+                    </label>
+                </div>
             </div>
         </div>
     </div>
@@ -135,6 +146,21 @@
                     <button id="masterpw-verify-ok" class="btn-primary">确认</button>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- 应急自锁遮罩层 -->
+    <div id="lockdown-overlay" class="modal-overlay hidden" style="z-index: 9999; backdrop-filter: blur(10px); background: rgba(0, 0, 0, 0.85);">
+        <div class="lockdown-content" style="text-align: center; color: white; padding: 40px; border-radius: 16px; background: var(--bg-card); max-width: 400px; border: 1px solid var(--border-color);">
+            <div class="lockdown-icon" style="color: #ef4444; margin-bottom: 20px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="m9 12 2 2 4-4"/>
+                </svg>
+            </div>
+            <h2 style="margin-bottom: 12px; color: var(--text-color);">已触发应急自锁</h2>
+            <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 24px; line-height: 1.5;">检测到异常环境（可能有人尝试调试或嗅探数据），已销毁内存中的解密密钥并锁定当前会话。</p>
+            <button id="btn-lockdown-unlock" class="btn-primary" style="width: 100%; padding: 12px;">重新验证并解锁</button>
         </div>
     </div>
 

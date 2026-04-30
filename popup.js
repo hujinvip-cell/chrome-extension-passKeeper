@@ -13,6 +13,23 @@ const ICONS = {
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // ── 应急自锁检测 ──────────────────────────────────────
+    chrome.storage.local.get(['antiSnoopMode'], (res) => {
+        if (res.antiSnoopMode) {
+            setInterval(() => {
+                const start = performance.now();
+                debugger;
+                if (performance.now() - start > 100) {
+                    console.warn('[Security] DevTools detected in popup. Closing.');
+                    if (chrome.storage.session) {
+                        chrome.storage.session.remove(['_sessionMasterKey']);
+                    }
+                    window.close();
+                }
+            }, 1000);
+        }
+    });
+
     const actualDomainEl   = document.getElementById('actual-domain');
     const domainChipsEl    = document.getElementById('domain-chips');
     const inputNewDomain   = document.getElementById('input-new-domain');
@@ -29,6 +46,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function normalizeDomain(input) {
         return (input || '').trim();
+    }
+
+    function clearNode(node) {
+        while (node.firstChild) node.removeChild(node.firstChild);
+    }
+
+    function appendIconButton(button, iconSvg) {
+        button.insertAdjacentHTML('afterbegin', iconSvg);
+    }
+
+    function setButtonIconAndMeta(button, iconSvg, id, action) {
+        if (id !== undefined) button.dataset.id = id;
+        if (action !== undefined) button.dataset.action = action;
+        appendIconButton(button, iconSvg);
     }
 
     // 域名匹配辅助函数
@@ -135,21 +166,37 @@ document.addEventListener('DOMContentLoaded', async () => {
             (acc.domains || []).forEach(d => allDomains.add(d));
         });
 
-        domainChipsEl.innerHTML = '';
+        clearNode(domainChipsEl);
 
         if (allDomains.size === 0) {
-            domainChipsEl.innerHTML = '<span class="chip-empty">暂无绑定域名，新增账号后将自动绑定当前网址</span>';
+            const empty = document.createElement('span');
+            empty.className = 'chip-empty';
+            empty.textContent = '暂无绑定域名，新增账号后将自动绑定当前网址';
+            domainChipsEl.appendChild(empty);
             return;
         }
 
         allDomains.forEach(domain => {
             const row = document.createElement('div');
             row.className = 'domain-chip-row-item';
-            row.innerHTML = `
-                <span class="chip-label" title="点击以编辑">${domain}</span>
-                <button class="chip-btn chip-edit-btn" data-domain="${domain}" title="编辑">${ICONS.edit}</button>
-                <button class="chip-btn chip-remove-btn" data-domain="${domain}" title="删除">${ICONS.close}</button>
-            `;
+            const label = document.createElement('span');
+            label.className = 'chip-label';
+            label.title = '点击以编辑';
+            label.textContent = domain;
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'chip-btn chip-edit-btn';
+            editBtn.dataset.domain = domain;
+            editBtn.title = '编辑';
+            appendIconButton(editBtn, ICONS.edit);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'chip-btn chip-remove-btn';
+            removeBtn.dataset.domain = domain;
+            removeBtn.title = '删除';
+            appendIconButton(removeBtn, ICONS.close);
+
+            row.append(label, editBtn, removeBtn);
             domainChipsEl.appendChild(row);
 
             // 内联编辑：点击编辑按钮或域名文字
@@ -179,11 +226,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 input.addEventListener('blur', saveEdit);
             };
 
-            row.querySelector('.chip-edit-btn').addEventListener('click', startEdit);
-            row.querySelector('.chip-label').addEventListener('click', startEdit);
+            editBtn.addEventListener('click', startEdit);
+            label.addEventListener('click', startEdit);
 
             // 删除
-            row.querySelector('.chip-remove-btn').addEventListener('click', async () => {
+            removeBtn.addEventListener('click', async () => {
                 if (!confirm(`确定移除共享域名 "${domain}" 吗？`)) return;
                 await unlinkDomain(domain);
                 renderDomainChips();
@@ -210,33 +257,60 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!actualDomain) return;
 
         const accounts = await getAccountsForDomain(actualDomain);
-        accountListEl.innerHTML = '';
+        clearNode(accountListEl);
 
         if (accounts.length === 0) {
-            accountListEl.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-icon">🔐</div>
-                    <div>暂无保存的账号</div>
-                </div>`;
+            const empty = document.createElement('div');
+            empty.className = 'empty-state';
+            const icon = document.createElement('div');
+            icon.className = 'empty-icon';
+            icon.textContent = '🔐';
+            const text = document.createElement('div');
+            text.textContent = '暂无保存的账号';
+            empty.append(icon, text);
+            accountListEl.appendChild(empty);
             return;
         }
 
             accounts.forEach((acc) => {
                 const item = document.createElement('div');
                 item.className = 'account-item';
-                item.innerHTML = `
-                    <div class="account-row-main">
-                        <span class="account-username">${acc.username}</span>
-                        <div class="account-actions">
-                            <button class="btn-act btn-fill"  data-id="${acc.id}" title="填充">${ICONS.fill}</button>
-                            <button class="btn-act btn-login" data-id="${acc.id}" title="填充并登录">${ICONS.loginFill}</button>
-                            <button class="btn-act btn-switch" data-id="${acc.id}" title="一键切换账号">${ICONS.switch}</button>
-                            <button class="btn-edit"          data-id="${acc.id}" title="编辑">${ICONS.edit}</button>
-                            <button class="btn-delete"        data-id="${acc.id}" title="删除">${ICONS.delete}</button>
-                        </div>
-                    </div>
-                    ${acc.remark ? `<div class="account-remark">${acc.remark}</div>` : ''}
-                `;
+                const mainRow = document.createElement('div');
+                mainRow.className = 'account-row-main';
+
+                const username = document.createElement('span');
+                username.className = 'account-username';
+                username.textContent = acc.username;
+
+                const actions = document.createElement('div');
+                actions.className = 'account-actions';
+
+                const actionDefs = [
+                    ['btn-act btn-fill', '填充', ICONS.fill],
+                    ['btn-act btn-login', '填充并登录', ICONS.loginFill],
+                    ['btn-act btn-switch', '一键切换账号', ICONS.switch],
+                    ['btn-edit', '编辑', ICONS.edit],
+                    ['btn-delete', '删除', ICONS.delete]
+                ];
+
+                actionDefs.forEach(([className, title, iconSvg]) => {
+                    const button = document.createElement('button');
+                    button.className = className;
+                    button.dataset.id = acc.id;
+                    button.title = title;
+                    appendIconButton(button, iconSvg);
+                    actions.appendChild(button);
+                });
+
+                mainRow.append(username, actions);
+                item.appendChild(mainRow);
+
+                if (acc.remark) {
+                    const remark = document.createElement('div');
+                    remark.className = 'account-remark';
+                    remark.textContent = acc.remark;
+                    item.appendChild(remark);
+                }
                 accountListEl.appendChild(item);
             });
 
@@ -278,6 +352,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ? await decryptPassword(account.password)
                     : account.password;
             } catch (e) {
+                if (e.message === 'LOCKED') {
+                    finish();
+                    if (confirm('🔒 堡垒已锁定，需验证主密码。是否立即前往管理面板解锁？')) {
+                        chrome.tabs.create({ url: chrome.runtime.getURL('manager.html') });
+                    }
+                    return;
+                }
                 console.error('[Crypto] 解密失败:', e);
                 finish();
                 alert('密码解密失败，请重新保存该账号。');
@@ -341,6 +422,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ? await decryptPassword(account.password)
                     : account.password;
             } catch (err) {
+                if (err.message === 'LOCKED') {
+                    finish();
+                    if (confirm('🔒 堡垒已锁定，需验证主密码。是否立即前往管理面板解锁？')) {
+                        chrome.tabs.create({ url: chrome.runtime.getURL('manager.html') });
+                    }
+                    return;
+                }
                 console.error('[Crypto] 解密失败:', err);
                 finish();
                 alert('密码解密失败，请重新保存该账号。');
@@ -444,7 +532,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             const acc = vault.find(a => a.id === editingId);
             if (!acc) return;
             if (passwordRaw) {
-                try { encPwd = await encryptPassword(passwordRaw); } catch(e) { alert('加密失败'); return; }
+                try { 
+                    encPwd = await encryptPassword(passwordRaw); 
+                } catch(e) { 
+                    if (e.message === 'LOCKED') {
+                        if (confirm('🔒 堡垒已锁定，需验证主密码。是否立即前往管理面板解锁？')) {
+                            chrome.tabs.create({ url: chrome.runtime.getURL('manager.html') });
+                        }
+                    } else {
+                        alert('加密失败');
+                    }
+                    return; 
+                }
             } else {
                 encPwd = acc.password;
             }
@@ -452,7 +551,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             acc.password = encPwd;
             acc.remark = remark;
         } else {
-            try { encPwd = await encryptPassword(passwordRaw); } catch(e) { alert('加密失败'); return; }
+            try { 
+                encPwd = await encryptPassword(passwordRaw); 
+            } catch(e) { 
+                if (e.message === 'LOCKED') {
+                    if (confirm('🔒 堡垒已锁定，需验证主密码。是否立即前往管理面板解锁？')) {
+                        chrome.tabs.create({ url: chrome.runtime.getURL('manager.html') });
+                    }
+                } else {
+                    alert('加密失败');
+                }
+                return; 
+            }
             // 新增时自动关联当前域名
             vault.push({
                 id: genId(),
@@ -543,29 +653,58 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 渲染下拉选择器
     function renderActiveSelect() {
-        selectActiveModel.innerHTML = modelConfigs.length
-            ? modelConfigs.map(c =>
-                `<option value="${c.id}" ${c.id === activeModelId ? 'selected' : ''}>${c.name} (${TYPE_LABELS[c.type] || c.type})</option>`
-              ).join('')
-            : '<option value="">— 未配置模型 —</option>';
+        clearNode(selectActiveModel);
+        if (!modelConfigs.length) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = '— 未配置模型 —';
+            selectActiveModel.appendChild(option);
+            return;
+        }
+
+        modelConfigs.forEach((cfg) => {
+            const option = document.createElement('option');
+            option.value = cfg.id;
+            option.selected = cfg.id === activeModelId;
+            option.textContent = `${cfg.name} (${TYPE_LABELS[cfg.type] || cfg.type})`;
+            selectActiveModel.appendChild(option);
+        });
     }
 
     // 渲染模型列表
     function renderModelList() {
-        modelConfigList.innerHTML = '';
+        clearNode(modelConfigList);
         modelConfigs.forEach(cfg => {
             const row = document.createElement('div');
             row.className = 'mcl-row' + (cfg.id === activeModelId ? ' mcl-active' : '');
-            row.innerHTML = `
-                <div class="mcl-info">
-                    <span class="mcl-name">${cfg.name}</span>
-                    <span class="mcl-type">${TYPE_LABELS[cfg.type] || cfg.type} · ${cfg.model}</span>
-                </div>
-                <div class="mcl-btns">
-                    <button class="mcl-btn" data-id="${cfg.id}" data-action="edit" title="编辑">${ICONS.edit}</button>
-                    <button class="mcl-btn mcl-del" data-id="${cfg.id}" data-action="del" title="删除">${ICONS.delete}</button>
-                </div>
-            `;
+            const info = document.createElement('div');
+            info.className = 'mcl-info';
+
+            const name = document.createElement('span');
+            name.className = 'mcl-name';
+            name.textContent = cfg.name;
+
+            const type = document.createElement('span');
+            type.className = 'mcl-type';
+            type.textContent = `${TYPE_LABELS[cfg.type] || cfg.type} · ${cfg.model}`;
+
+            info.append(name, type);
+
+            const btns = document.createElement('div');
+            btns.className = 'mcl-btns';
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'mcl-btn';
+            editBtn.title = '编辑';
+            setButtonIconAndMeta(editBtn, ICONS.edit, cfg.id, 'edit');
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'mcl-btn mcl-del';
+            delBtn.title = '删除';
+            setButtonIconAndMeta(delBtn, ICONS.delete, cfg.id, 'del');
+
+            btns.append(editBtn, delBtn);
+            row.append(info, btns);
             modelConfigList.appendChild(row);
         });
 

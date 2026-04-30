@@ -237,9 +237,20 @@ async function togglePasswordInPlace(id, btn) {
                     : rowData.password;
                 rowData._plainPassword = plainPwd; // 缓存
             } catch (e) {
-                console.error('[Crypto] 解密失败:', e);
-                alert('密码解密失败');
-                return;
+                if (e.message === 'LOCKED') {
+                    const pw = await showMasterPwDialog();
+                    if (!pw) return;
+                    try {
+                        plainPwd = await decryptPassword(rowData.password, pw);
+                        rowData._plainPassword = plainPwd;
+                    } catch (err) {
+                        alert('解锁失败或密码错误'); return;
+                    }
+                } else {
+                    console.error('[Crypto] 解密失败:', e);
+                    alert('密码解密失败');
+                    return;
+                }
             }
         }
 
@@ -477,9 +488,19 @@ async function handleCopy(btn) {
                 ? await decryptPassword(row.password)
                 : row.password;
         } catch (e) {
-            console.error('[Crypto] 解密失败:', e);
-            alert('密码解密失败');
-            return;
+            if (e.message === 'LOCKED') {
+                const pw = await showMasterPwDialog();
+                if (!pw) return;
+                try {
+                    plainPwd = await decryptPassword(row.password, pw);
+                } catch (err) {
+                    alert('解锁失败或密码错误'); return;
+                }
+            } else {
+                console.error('[Crypto] 解密失败:', e);
+                alert('密码解密失败');
+                return;
+            }
         }
     }
 
@@ -564,6 +585,13 @@ document.getElementById('auth-setup-modal').addEventListener('click', (e) => {
 
 // 注册 WebAuthn
 document.getElementById('btn-register-webauthn').addEventListener('click', async () => {
+    // 如果已经设置过任何验证方式，重新注册必须强制验证身份（不走缓存，指纹优先）
+    const authState = await hasRegisteredAuth();
+    if (authState.webauthn || authState.masterPw) {
+        const authed = await verifyIdentity(showMasterPwDialog);
+        if (!authed) return;
+    }
+
     const btn = document.getElementById('btn-register-webauthn');
     btn.disabled = true;
     btn.textContent = '请在系统弹窗中验证…';
@@ -588,11 +616,164 @@ document.getElementById('btn-set-masterpw').addEventListener('click', async () =
     if (pw.length < 4) { alert('主密码至少 4 位'); return; }
     if (pw !== confirm) { alert('两次输入不一致'); return; }
 
-    await setMasterPassword(pw);
-    alert('主密码设置成功！');
+    const hasMaster = await hasMasterPassword();
+    if (hasMaster) {
+        // 如果已经有密码了，用户正在请求重置
+        const unlocked = typeof isVaultUnlocked === 'function' ? await isVaultUnlocked() : true;
+        if (!unlocked) {
+            alert('🔒 堡垒已锁定，必须先关闭高防模式才能修改密码。如果您忘记了旧密码，数据可能无法恢复。');
+            return;
+        }
+        
+        // 要求身份验证（强制验证，不走缓存，指纹优先）
+        const authed = await verifyIdentity(showMasterPwDialog);
+        if (!authed) return;
+        
+        await setMasterPassword(pw);
+        
+        // 如果开启了高防模式，还需要用新密码重新包裹内存中的真实密钥！
+        const isHighSec = typeof isAntiSnoopMode === 'function' ? await isAntiSnoopMode() : false;
+        if (isHighSec) {
+            try {
+                await enableHighSecurity(pw);
+            } catch(e) {
+                alert('重置密码失败: ' + e.message);
+                return;
+            }
+        }
+        alert('主密码重置成功！下次需使用新密码解锁。');
+    } else {
+        await setMasterPassword(pw);
+        alert('主密码设置成功！');
+    }
+
     document.getElementById('auth-masterpw-input').value = '';
     document.getElementById('auth-masterpw-confirm').value = '';
     openAuthSetupModal(); // 刷新状态
+});
+
+// ── 应急自锁功能 (Anti-Snoop) ──────────────────────────────
+let antiSnoopMode = false;
+let antiSnoopTimer = null;
+
+function toggleAntiSnoopTimer(enable) {
+    if (antiSnoopTimer) {
+        clearInterval(antiSnoopTimer);
+        antiSnoopTimer = null;
+    }
+    if (enable) {
+        antiSnoopTimer = setInterval(() => {
+            const start = performance.now();
+            debugger;
+            if (performance.now() - start > 100) {
+                triggerLockdown();
+            }
+        }, 1000);
+    }
+}
+
+function triggerLockdown() {
+    console.warn('[Security] DevTools detected. Triggering lockdown.');
+    authSessionExpiry = 0;
+    revealedKeys.clear();
+    allRows.forEach(r => delete r._plainPassword);
+    renderTable();
+    
+    // 销毁纯内存中的真实主密钥
+    destroySessionKey();
+    
+    // 如果安全设置弹窗开启，先关掉
+    document.getElementById('auth-setup-modal').classList.add('hidden');
+    
+    // 显示锁定遮罩层
+    document.getElementById('lockdown-overlay').classList.remove('hidden');
+}
+
+// 初始化加载配置
+chrome.storage.local.get(['antiSnoopMode'], (res) => {
+    antiSnoopMode = !!res.antiSnoopMode;
+    const toggleEl = document.getElementById('toggle-anti-snoop');
+    if (toggleEl) toggleEl.checked = antiSnoopMode;
+    toggleAntiSnoopTimer(antiSnoopMode);
+});
+
+// 监听开关变化
+document.getElementById('toggle-anti-snoop').addEventListener('change', async (e) => {
+    const isChecked = e.target.checked;
+    
+    // UI状态乐观更新的回滚机制：先切回原始状态，操作成功再改变
+    e.target.checked = !isChecked;
+    
+    if (isChecked) {
+        // 开启高防模式涉及底层的包裹，必须使用主密码（即使当前已解锁）
+        const hasMaster = await hasMasterPassword();
+        if (!hasMaster) {
+            alert('开启高防模式必须先设置主密码。');
+            return;
+        }
+        
+        const pw = await showMasterPwDialog();
+        if (!pw) return;
+        
+        // 必须校验用户输入的主密码是否正确！否则会用错误的密码包裹密钥导致死锁
+        const isPwCorrect = typeof verifyMasterPassword === 'function' ? await verifyMasterPassword(pw) : true;
+        if (!isPwCorrect) {
+            alert('主密码错误，开启高防模式失败。');
+            return;
+        }
+        
+        try {
+            await enableHighSecurity(pw);
+            e.target.checked = true;
+            toggleAntiSnoopTimer(true);
+            refreshAuthSession();
+        } catch (err) {
+            alert('开启失败: ' + err.message);
+        }
+    } else {
+        // 关闭高防模式
+        // 如果金库当前已经解锁（在内存中有密钥），我们不需要主密码！可以使用指纹！
+        const unlocked = typeof isVaultUnlocked === 'function' ? await isVaultUnlocked() : false;
+        
+        if (unlocked) {
+            // 已解锁状态下，只需要做常规身份验证（指纹或密码）即可关闭
+            const authed = await requireAuth();
+            if (!authed) return;
+            try {
+                await disableHighSecurity(); // 无需传入密码
+                e.target.checked = false;
+                toggleAntiSnoopTimer(false);
+            } catch (err) {
+                alert('关闭失败: ' + err.message);
+            }
+        } else {
+            // 金库处于被锁状态，没有密码无法解包
+            const pw = await showMasterPwDialog();
+            if (!pw) return;
+            try {
+                await disableHighSecurity(pw);
+                e.target.checked = false;
+                toggleAntiSnoopTimer(false);
+                refreshAuthSession();
+            } catch (err) {
+                if (err.message === 'WRONG_PASSWORD') {
+                    alert('主密码错误');
+                } else {
+                    alert('关闭失败: ' + err.message);
+                }
+            }
+        }
+    }
+});
+
+// 解锁按钮
+document.getElementById('btn-lockdown-unlock').addEventListener('click', async () => {
+    // 这里强制弹出验证，不走缓存，因为缓存已经被清空
+    const result = await verifyIdentity(showMasterPwDialog);
+    if (result) {
+        refreshAuthSession();
+        document.getElementById('lockdown-overlay').classList.add('hidden');
+    }
 });
 
 // ── 主题切换按钮 ────────────────────────────────────

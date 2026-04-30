@@ -441,6 +441,12 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function captureCredentials() {
+    // 检查扩展上下文是否有效
+    if (!chrome.runtime?.id) {
+        console.warn('[PassKeeper] 扩展已更新，当前页面上下文已失效，请刷新页面。');
+        return;
+    }
+    
     const { usernameInput, passwordInput } = findInputs();
     if (usernameInput && passwordInput && usernameInput.value && passwordInput.value) {
         const account = {
@@ -450,10 +456,15 @@ function captureCredentials() {
             timestamp: Date.now()
         };
         console.log('[PassKeeper] 捕获到账号信息暂存:', account.username);
-        chrome.storage.local.set({ pendingSaveAccount: account });
-        
-        // 延迟检查是否登录成功（针对 SPA 页面不刷新的情况）
-        setTimeout(checkLoginSuccessAndPrompt, 2500);
+        chrome.runtime.sendMessage({ action: 'stagePendingSaveAccount', account }, (res) => {
+            if (chrome.runtime.lastError || !res?.success) {
+                console.warn('[PassKeeper] 无法暂存账号，可能是扩展已更新或密码库被锁定。', chrome.runtime.lastError || res?.error);
+                return;
+            }
+
+            // 延迟检查是否登录成功（针对 SPA 页面不刷新的情况）
+            setTimeout(checkLoginSuccessAndPrompt, 2500);
+        });
     }
 }
 
@@ -464,10 +475,14 @@ document.addEventListener('DOMContentLoaded', checkLoginSuccessAndPrompt);
 checkLoginSuccessAndPrompt();
 
 function checkLoginSuccessAndPrompt() {
-    chrome.storage.local.get(['pendingSaveAccount'], (res) => {
-        const account = res.pendingSaveAccount;
-        if (!account) return;
-        
+    // 检查扩展上下文是否有效
+    if (!chrome.runtime?.id) return;
+    
+    try {
+        chrome.runtime.sendMessage({ action: 'getPendingSaveAccount' }, (res) => {
+            const account = res?.account;
+            if (!account) return;
+            
         // 放宽域名限制：主域名相同即可（比如 login.example.com 跳到 www.example.com）
         const getRoot = (str) => {
             try {
@@ -478,7 +493,7 @@ function checkLoginSuccessAndPrompt() {
             }
         };
         if (getRoot(account.domain) !== getRoot(window.location.href) || Date.now() - account.timestamp > 5 * 60 * 1000) {
-            chrome.storage.local.remove('pendingSaveAccount');
+            chrome.runtime.sendMessage({ action: 'discardPendingSaveAccount' });
             return;
         }
 
@@ -489,7 +504,10 @@ function checkLoginSuccessAndPrompt() {
         console.log('[PassKeeper] 判定登录成功，展示保存提示UI');
         // 如果没有可见密码框，判定为登录成功，展示提示框
         showSavePrompt(account);
-    });
+        });
+    } catch (e) {
+        console.warn('[PassKeeper] 无法检查登录状态，可能是扩展已更新，请刷新页面重试。', e);
+    }
 }
 
 function showSavePrompt(account) {
@@ -607,19 +625,37 @@ function showSavePrompt(account) {
 
     const container = document.createElement('div');
     container.className = 'prompt-container';
-    container.innerHTML = `
-        <div class="header">
-            <span class="icon">🔐</span> PassKeeper
-        </div>
-        <div class="content">
-            检测到新的账号登录信息，是否将其保存到密码库？<br>
-            账号：<span class="username">${account.username}</span>
-        </div>
-        <div class="actions">
-            <button class="btn-ignore" id="btn-ignore">忽略</button>
-            <button class="btn-save" id="btn-save">保存</button>
-        </div>
-    `;
+
+    const header = document.createElement('div');
+    header.className = 'header';
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = '🔐';
+    header.append(icon, document.createTextNode(' PassKeeper'));
+
+    const content = document.createElement('div');
+    content.className = 'content';
+    content.append('检测到新的账号登录信息，是否将其保存到密码库？');
+    content.appendChild(document.createElement('br'));
+    content.append('账号：');
+    const username = document.createElement('span');
+    username.className = 'username';
+    username.textContent = account.username;
+    content.appendChild(username);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const ignoreBtn = document.createElement('button');
+    ignoreBtn.className = 'btn-ignore';
+    ignoreBtn.id = 'btn-ignore';
+    ignoreBtn.textContent = '忽略';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn-save';
+    saveBtn.id = 'btn-save';
+    saveBtn.textContent = '保存';
+    actions.append(ignoreBtn, saveBtn);
+
+    container.append(header, content, actions);
 
     shadow.appendChild(style);
     shadow.appendChild(container);
@@ -630,7 +666,7 @@ function showSavePrompt(account) {
         root.style.transition = 'opacity 0.3s';
         setTimeout(() => {
             root.remove();
-            chrome.storage.local.remove('pendingSaveAccount');
+            chrome.runtime.sendMessage({ action: 'discardPendingSaveAccount' });
         }, 300);
     };
 
@@ -647,7 +683,11 @@ function showSavePrompt(account) {
                 saveBtn.style.color = '#fff';
                 setTimeout(closePrompt, 1000);
             } else {
-                alert('保存失败: ' + (res?.error || '未知错误'));
+                if (res?.error === 'LOCKED') {
+                    alert('🔒 堡垒高防已锁定，自动保存失败。请先在扩展图标中前往管理面板输入主密码解锁。');
+                } else {
+                    alert('保存失败: ' + (res?.error || '未知错误'));
+                }
                 saveBtn.textContent = '保存';
                 saveBtn.style.pointerEvents = 'auto';
             }

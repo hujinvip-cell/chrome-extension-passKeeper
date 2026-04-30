@@ -1,5 +1,7 @@
 importScripts('crypto.js');
 
+const PENDING_SAVE_ACCOUNT_KEY = 'pendingSaveAccount';
+
 // ── 验证码后处理：从模型输出中提取最终答案 ─────────────────────
 function postProcess(text) {
     text = (text || '').trim();
@@ -60,8 +62,6 @@ async function callOllama(cfg, base64Data) {
 // ── Gemini API ────────────────────────────────────────────────
 async function callGemini(cfg, base64Data, mimeType) {
     const model = cfg.model || 'gemini-2.0-flash';
-    const keyPreview = (cfg.apiKey || '').slice(0, 8) + '...';
-    console.log(`[AutoLogin][Gemini] model=${model}, key=${keyPreview}, mimeType=${mimeType}, base64Len=${base64Data?.length}`);
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cfg.apiKey}`;
     const response = await fetch(url, {
         method: 'POST',
@@ -81,18 +81,15 @@ async function callGemini(cfg, base64Data, mimeType) {
         throw new Error(`Gemini API error: ${response.status} - ${err.error?.message || ''}`);
     }
     const data = await response.json();
-    console.log('[AutoLogin][Gemini] full response:', JSON.stringify(data));
     const candidate = data.candidates?.[0];
     if (!candidate) {
-        console.warn('[AutoLogin][Gemini] no candidates, promptFeedback:', JSON.stringify(data.promptFeedback));
+        console.warn('[AutoLogin][Gemini] no candidates');
         return '';
     }
     if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-        console.warn('[AutoLogin][Gemini] finishReason:', candidate.finishReason, 'safetyRatings:', JSON.stringify(candidate.safetyRatings));
+        console.warn('[AutoLogin][Gemini] finishReason:', candidate.finishReason);
     }
-    const text = (candidate.content?.parts?.[0]?.text || '').trim();
-    console.log('[AutoLogin][Gemini] extracted text:', JSON.stringify(text));
-    return text;
+    return (candidate.content?.parts?.[0]?.text || '').trim();
 }
 
 // ── OpenAI-compatible API ─────────────────────────────────────
@@ -153,9 +150,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     raw = await callOllama(cfg, base64Data);
                 }
 
-                console.log('[AutoLogin] raw model output:', JSON.stringify(raw));
                 const text = postProcess(raw);
-                console.log('[AutoLogin] captcha result:', text);
                 sendResponse({ success: true, text });
 
             } catch (error) {
@@ -165,6 +160,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
 
         return true; // 异步 sendResponse
+    }
+
+    if (request.action === 'stagePendingSaveAccount') {
+        const { account } = request;
+        if (!account?.username || !account?.password || !account?.domain) {
+            sendResponse({ success: false, error: 'INVALID_ACCOUNT' });
+            return false;
+        }
+
+        (async () => {
+            try {
+                const encryptedPassword = await encryptPassword(account.password);
+                await new Promise(resolve => chrome.storage.local.set({
+                    [PENDING_SAVE_ACCOUNT_KEY]: {
+                        username: account.username,
+                        password: encryptedPassword,
+                        domain: account.domain,
+                        timestamp: account.timestamp || Date.now()
+                    }
+                }, resolve));
+                sendResponse({ success: true });
+            } catch (err) {
+                console.error('[AutoSave] Failed to stage account:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    }
+
+    if (request.action === 'getPendingSaveAccount') {
+        chrome.storage.local.get([PENDING_SAVE_ACCOUNT_KEY], (res) => {
+            sendResponse({ success: true, account: res[PENDING_SAVE_ACCOUNT_KEY] || null });
+        });
+        return true;
+    }
+
+    if (request.action === 'discardPendingSaveAccount') {
+        chrome.storage.local.remove(PENDING_SAVE_ACCOUNT_KEY, () => {
+            sendResponse({ success: true });
+        });
+        return true;
     }
 
     if (request.action === 'saveAccount') {
@@ -198,7 +234,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 // 确保已导入 crypto.js 并拥有 encryptPassword 和 genId 
                 // genId 不是 crypto.js 里的，需要自己生成
                 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-                const encPwd = await encryptPassword(account.password);
+                const encPwd = account.password && !account.password.iv
+                    ? await encryptPassword(account.password)
+                    : account.password;
                 
                 // 检查是否已存在同域名下的同用户名账号 (支持通配符)
                 const existingIndex = vault.findIndex(a => a.username === account.username && (a.domains || []).some(d => isMatch(d, account.domain)));
@@ -215,6 +253,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 }
                 
                 await new Promise(resolve => chrome.storage.local.set({ vault }, resolve));
+                await new Promise(resolve => chrome.storage.local.remove(PENDING_SAVE_ACCOUNT_KEY, resolve));
                 sendResponse({ success: true });
             } catch (err) {
                 console.error('[AutoSave] Failed to save account:', err);
