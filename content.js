@@ -308,10 +308,12 @@ function fillTestForm() {
             if (el.multiple) {
                 Array.from(el.options).forEach(o => (o.selected = false));
                 nonEmpty.slice(0, 2).forEach(o => (o.selected = true));
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
             } else {
-                el.value = nonEmpty[Math.floor(Math.random() * nonEmpty.length)].value;
+                const val = nonEmpty[Math.floor(Math.random() * nonEmpty.length)].value;
+                setFieldValue(el, val);
             }
-            el.dispatchEvent(new Event('change', { bubbles: true }));
             filled++; return;
         }
 
@@ -357,16 +359,14 @@ function fillTestForm() {
                     document.querySelectorAll('input[type="radio"][name="' + CSS.escape(name) + '"]')
                 ).filter(isFieldVisible);
                 if (group.length) {
-                    group[0].checked = true;
-                    group[0].dispatchEvent(new Event('change', { bubbles: true }));
+                    setFieldChecked(group[0], true);
                     filled++;
                 }
                 break;
             }
             case 'checkbox':
                 if (!el.checked) {
-                    el.checked = true;
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    setFieldChecked(el, true);
                     filled++;
                 }
                 break;
@@ -388,9 +388,14 @@ function isFieldVisible(el) {
 
 // 兼容 React/Vue/Angular 双向绑定的 value setter
 function setFieldValue(el, value) {
-    const proto = el.tagName === 'TEXTAREA'
-        ? window.HTMLTextAreaElement.prototype
-        : window.HTMLInputElement.prototype;
+    let proto;
+    if (el.tagName === 'TEXTAREA') {
+        proto = window.HTMLTextAreaElement.prototype;
+    } else if (el.tagName === 'SELECT') {
+        proto = window.HTMLSelectElement.prototype;
+    } else {
+        proto = window.HTMLInputElement.prototype;
+    }
     const desc = Object.getOwnPropertyDescriptor(proto, 'value');
     if (desc && desc.set) {
         desc.set.call(el, value);
@@ -399,4 +404,253 @@ function setFieldValue(el, value) {
     }
     el.dispatchEvent(new Event('input',  { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// 兼容 React/Vue/Angular 双向绑定的 checked setter (针对 radio/checkbox)
+function setFieldChecked(el, checked) {
+    const proto = window.HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'checked');
+    if (desc && desc.set) {
+        desc.set.call(el, checked);
+    } else {
+        el.checked = checked;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// ── 自动保存账号密码提示 ─────────────────────────────────────────
+
+// 监听表单提交
+document.addEventListener('submit', (e) => {
+    captureCredentials();
+}, true);
+
+// 监听按键：回车键提交
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        captureCredentials();
+    }
+}, true);
+
+// 监听可能的点击登录按钮（放宽条件，只要点击按钮且密码框有值，就暂存）
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('button, input[type="button"], input[type="submit"], a, div[role="button"], span[role="button"]');
+    if (!btn) return;
+    captureCredentials();
+}, true);
+
+function captureCredentials() {
+    const { usernameInput, passwordInput } = findInputs();
+    if (usernameInput && passwordInput && usernameInput.value && passwordInput.value) {
+        const account = {
+            username: usernameInput.value,
+            password: passwordInput.value,
+            domain: window.location.origin + window.location.pathname,
+            timestamp: Date.now()
+        };
+        console.log('[PassKeeper] 捕获到账号信息暂存:', account.username);
+        chrome.storage.local.set({ pendingSaveAccount: account });
+        
+        // 延迟检查是否登录成功（针对 SPA 页面不刷新的情况）
+        setTimeout(checkLoginSuccessAndPrompt, 2500);
+    }
+}
+
+// 页面加载时检查是否有 pendingSaveAccount
+document.addEventListener('DOMContentLoaded', checkLoginSuccessAndPrompt);
+
+// 如果是动态加载的（比如 content script 晚于 DOMContentLoaded 注入），也可以直接执行一次
+checkLoginSuccessAndPrompt();
+
+function checkLoginSuccessAndPrompt() {
+    chrome.storage.local.get(['pendingSaveAccount'], (res) => {
+        const account = res.pendingSaveAccount;
+        if (!account) return;
+        
+        // 放宽域名限制：主域名相同即可（比如 login.example.com 跳到 www.example.com）
+        const getRoot = (str) => {
+            try {
+                const host = new URL(str.startsWith('http') ? str : 'http://' + str).hostname;
+                return host.split('.').slice(-2).join('.');
+            } catch(e) {
+                return str;
+            }
+        };
+        if (getRoot(account.domain) !== getRoot(window.location.href) || Date.now() - account.timestamp > 5 * 60 * 1000) {
+            chrome.storage.local.remove('pendingSaveAccount');
+            return;
+        }
+
+        // 检查页面是否还有可见的密码框。如果有，说明可能还在登录页（登录失败，或者还没跳走）
+        const pwdInputs = Array.from(document.querySelectorAll('input[type="password"]')).filter(isFieldVisible);
+        if (pwdInputs.length > 0) return;
+
+        console.log('[PassKeeper] 判定登录成功，展示保存提示UI');
+        // 如果没有可见密码框，判定为登录成功，展示提示框
+        showSavePrompt(account);
+    });
+}
+
+function showSavePrompt(account) {
+    if (document.getElementById('passkeeper-save-prompt-root')) return;
+
+    const root = document.createElement('div');
+    root.id = 'passkeeper-save-prompt-root';
+    root.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 2147483647;
+    `;
+    
+    const shadow = root.attachShadow({ mode: 'closed' });
+    
+    const style = document.createElement('style');
+    style.textContent = `
+        .prompt-container {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            padding: 16px 20px;
+            width: 300px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #333;
+            animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 8px;
+        }
+        .icon {
+            font-size: 18px;
+        }
+        .content {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 16px;
+            line-height: 1.5;
+        }
+        .username {
+            font-weight: bold;
+            color: #1a73e8;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        button {
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-ignore {
+            background: transparent;
+            color: #666;
+        }
+        .btn-ignore:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        .btn-save {
+            background: #1a73e8;
+            color: white;
+            box-shadow: 0 2px 6px rgba(26, 115, 232, 0.3);
+        }
+        .btn-save:hover {
+            background: #1557b0;
+            box-shadow: 0 4px 12px rgba(26, 115, 232, 0.4);
+        }
+        /* 暗黑模式支持 */
+        @media (prefers-color-scheme: dark) {
+            .prompt-container {
+                background: rgba(30, 30, 30, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                color: #eee;
+            }
+            .content {
+                color: #aaa;
+            }
+            .username {
+                color: #8ab4f8;
+            }
+            .btn-ignore {
+                color: #aaa;
+            }
+            .btn-ignore:hover {
+                background: rgba(255, 255, 255, 0.1);
+            }
+            .btn-save {
+                background: #8ab4f8;
+                color: #202124;
+            }
+            .btn-save:hover {
+                background: #9bbcf0;
+            }
+        }
+    `;
+
+    const container = document.createElement('div');
+    container.className = 'prompt-container';
+    container.innerHTML = `
+        <div class="header">
+            <span class="icon">🔐</span> PassKeeper
+        </div>
+        <div class="content">
+            检测到新的账号登录信息，是否将其保存到密码库？<br>
+            账号：<span class="username">${account.username}</span>
+        </div>
+        <div class="actions">
+            <button class="btn-ignore" id="btn-ignore">忽略</button>
+            <button class="btn-save" id="btn-save">保存</button>
+        </div>
+    `;
+
+    shadow.appendChild(style);
+    shadow.appendChild(container);
+    document.body.appendChild(root);
+
+    const closePrompt = () => {
+        root.style.opacity = '0';
+        root.style.transition = 'opacity 0.3s';
+        setTimeout(() => {
+            root.remove();
+            chrome.storage.local.remove('pendingSaveAccount');
+        }, 300);
+    };
+
+    shadow.getElementById('btn-ignore').addEventListener('click', closePrompt);
+    shadow.getElementById('btn-save').addEventListener('click', () => {
+        const saveBtn = shadow.getElementById('btn-save');
+        saveBtn.textContent = '保存中...';
+        saveBtn.style.pointerEvents = 'none';
+        
+        chrome.runtime.sendMessage({ action: 'saveAccount', account }, (res) => {
+            if (res && res.success) {
+                saveBtn.textContent = '已保存';
+                saveBtn.style.background = '#34a853';
+                saveBtn.style.color = '#fff';
+                setTimeout(closePrompt, 1000);
+            } else {
+                alert('保存失败: ' + (res?.error || '未知错误'));
+                saveBtn.textContent = '保存';
+                saveBtn.style.pointerEvents = 'auto';
+            }
+        });
+    });
 }

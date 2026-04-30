@@ -1,3 +1,5 @@
+importScripts('crypto.js');
+
 // ── 验证码后处理：从模型输出中提取最终答案 ─────────────────────
 function postProcess(text) {
     text = (text || '').trim();
@@ -162,6 +164,63 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
         });
 
+        return true; // 异步 sendResponse
+    }
+
+    if (request.action === 'saveAccount') {
+        const { account } = request;
+        chrome.storage.local.get(['vault'], async (res) => {
+            const vault = res.vault || [];
+            
+            // 域名匹配辅助函数
+            const isMatch = (pattern, actualUrl) => {
+                if (!pattern || !actualUrl) return false;
+                if (pattern === actualUrl) return true;
+                if (pattern.includes('*')) {
+                    const regexStr = '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
+                    try { if (new RegExp(regexStr).test(actualUrl)) return true; } catch(e){}
+                }
+                if (!pattern.startsWith('http')) {
+                    try {
+                        const urlObj = new URL(actualUrl);
+                        if (urlObj.host === pattern || urlObj.host.endsWith('.' + pattern)) return true;
+                        const hostPath = urlObj.host + urlObj.pathname;
+                        if (hostPath.startsWith(pattern)) return true;
+                    } catch(e) {}
+                    if (actualUrl.includes(pattern)) return true;
+                } else {
+                    if (actualUrl.startsWith(pattern)) return true;
+                }
+                return false;
+            };
+
+            try {
+                // 确保已导入 crypto.js 并拥有 encryptPassword 和 genId 
+                // genId 不是 crypto.js 里的，需要自己生成
+                const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+                const encPwd = await encryptPassword(account.password);
+                
+                // 检查是否已存在同域名下的同用户名账号 (支持通配符)
+                const existingIndex = vault.findIndex(a => a.username === account.username && (a.domains || []).some(d => isMatch(d, account.domain)));
+                if (existingIndex >= 0) {
+                    vault[existingIndex].password = encPwd;
+                } else {
+                    vault.push({
+                        id: genId(),
+                        username: account.username,
+                        password: encPwd,
+                        remark: '自动保存',
+                        domains: [account.domain]
+                    });
+                }
+                
+                await new Promise(resolve => chrome.storage.local.set({ vault }, resolve));
+                sendResponse({ success: true });
+            } catch (err) {
+                console.error('[AutoSave] Failed to save account:', err);
+                sendResponse({ success: false, error: err.message });
+            }
+        });
         return true; // 异步 sendResponse
     }
 });

@@ -605,6 +605,70 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
 });
 
+// ── 列宽拖拽与持久化 ──────────────────────────────────────
+function loadColumnWidths() {
+    const saved = localStorage.getItem('manager_col_widths');
+    if (saved) {
+        try {
+            const widths = JSON.parse(saved);
+            const tableWrap = document.getElementById('account-table-wrap');
+            for (const [key, val] of Object.entries(widths)) {
+                if (val) tableWrap.style.setProperty(key, val);
+            }
+        } catch(e) {}
+    }
+}
+
+function initColumnResizers() {
+    const tableWrap = document.getElementById('account-table-wrap');
+    let isResizing = false;
+    let currentResizer = null;
+    let startX = 0;
+    let startWidth = 0;
+    let targetVar = '';
+
+    document.querySelectorAll('.col-resizer').forEach(resizer => {
+        resizer.addEventListener('mousedown', function(e) {
+            isResizing = true;
+            currentResizer = this;
+            targetVar = this.dataset.col;
+            startX = e.clientX;
+            
+            const headerCol = this.parentElement;
+            startWidth = headerCol.getBoundingClientRect().width;
+            
+            this.classList.add('active');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!isResizing) return;
+        const dx = e.clientX - startX;
+        let newWidth = startWidth + dx;
+        if (newWidth < 60) newWidth = 60; // 最小宽度限制
+        tableWrap.style.setProperty(targetVar, newWidth + 'px');
+    });
+
+    document.addEventListener('mouseup', function() {
+        if (!isResizing) return;
+        isResizing = false;
+        if (currentResizer) currentResizer.classList.remove('active');
+        currentResizer = null;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        
+        // 保存到 localStorage
+        const widths = {
+            '--col-domain': tableWrap.style.getPropertyValue('--col-domain'),
+            '--col-username': tableWrap.style.getPropertyValue('--col-username'),
+            '--col-password': tableWrap.style.getPropertyValue('--col-password')
+        };
+        localStorage.setItem('manager_col_widths', JSON.stringify(widths));
+    });
+}
+
 // ── 数据迁移 ──────────────────────────────────────────
 async function migrateToVault() {
     return new Promise((resolve) => {
@@ -652,11 +716,12 @@ chrome.storage.onChanged.addListener((changes) => {
     }
 });
 
-// ── 初始化 ──────────────────────────────────────────
 (async () => {
     applyTheme(getTheme());
+    loadColumnWidths();
     await migrateToVault();
     await migrateToEncrypted().catch(e => console.warn('[Crypto] 迁移检查失败', e));
     initTableEvents();
+    initColumnResizers();
     loadAllAccounts();
 })();

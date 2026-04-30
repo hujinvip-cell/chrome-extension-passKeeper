@@ -27,32 +27,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 编辑状态
     let editingId = null; // null = 新增，id = 编辑对应账号 ID
 
-    // 初步解析域名字符串 → 统一格式：host[/第一段路径]
-    // 支持: 'http://192.168.1.1:8012/lzsj/login' → '192.168.1.1:8012/lzsj'
-    //          '192.168.1.1:8012/lzsj'               → '192.168.1.1:8012/lzsj'
-    //          '192.168.1.1:8012'                    → '192.168.1.1:8012'
-    //          'localhost'                           → 'localhost'
     function normalizeDomain(input) {
-        input = (input || '').trim();
-        if (!input) return '';
-        let host, pathname = '';
-        if (/^https?:\/\//.test(input)) {
-            try {
-                const url = new URL(input);
-                host = url.host;          // 含端口
-                pathname = url.pathname;  // '/lzsj/login'
-            } catch (e) { return ''; }
-        } else if (input.includes('/')) {
-            const idx = input.indexOf('/');
-            host = input.substring(0, idx);
-            pathname = input.substring(idx);
-        } else {
-            return input; // 纯 host 或 host:port
-        }
-        // 取第一段路径节点作为应用标识（如 /lzsj）
-        const firstSeg = pathname.split('/').filter(Boolean)[0];
-        return firstSeg ? `${host}/${firstSeg}` : host;
+        return (input || '').trim();
     }
+
+    // 域名匹配辅助函数
+    const isMatch = (pattern, actualUrl) => {
+        if (!pattern || !actualUrl) return false;
+        if (pattern === actualUrl) return true;
+        if (pattern.includes('*')) {
+            const regexStr = '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
+            try { if (new RegExp(regexStr).test(actualUrl)) return true; } catch(e){}
+        }
+        if (!pattern.startsWith('http')) {
+            try {
+                const urlObj = new URL(actualUrl);
+                if (urlObj.host === pattern || urlObj.host.endsWith('.' + pattern)) return true;
+                const hostPath = urlObj.host + urlObj.pathname;
+                if (hostPath.startsWith(pattern)) return true;
+            } catch(e) {}
+            if (actualUrl.includes(pattern)) return true;
+        } else {
+            if (actualUrl.startsWith(pattern)) return true;
+        }
+        return false;
+    };
 
     // ── 工具函数 ───────────────────────────────────────────
     async function getVault() {
@@ -66,7 +65,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 找到当前域名下的所有账号
     async function getAccountsForDomain(domain) {
         const vault = await getVault();
-        return vault.filter(acc => (acc.domains || []).includes(domain));
+        return vault.filter(acc => (acc.domains || []).some(d => isMatch(d, domain)));
     }
 
     // 绑定域名：将新域名添加到所有目前包含目标域名的账号中
@@ -74,7 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const vault = await getVault();
         let changed = false;
         vault.forEach(acc => {
-            if ((acc.domains || []).includes(targetDomain)) {
+            if ((acc.domains || []).some(d => isMatch(d, targetDomain))) {
                 if (!acc.domains.includes(newDomain)) {
                     acc.domains.push(newDomain);
                     changed = true;
@@ -89,7 +88,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const vault = await getVault();
         let changed = false;
         vault.forEach(acc => {
-            if ((acc.domains || []).includes(actualDomain)) {
+            if ((acc.domains || []).some(d => isMatch(d, actualDomain))) {
                 acc.domains = (acc.domains || []).filter(d => d !== domainToRemove);
                 changed = true;
             }
@@ -97,18 +96,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 过滤掉没有任何域名的账号
         const finalVault = vault.filter(acc => (acc.domains || []).length > 0);
         await saveVault(finalVault);
-    }
-
-    // 获取当前域名下账号所关联的其他域名（并集）
-    async function getSharedDomains() {
-        const accounts = await getAccountsForDomain(actualDomain);
-        const others = new Set();
-        accounts.forEach(acc => {
-            (acc.domains || []).forEach(d => {
-                if (d !== actualDomain) others.add(d);
-            });
-        });
-        return Array.from(others);
     }
 
     // ── 初始化 ─────────────────────────────────────────────
@@ -122,16 +109,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 初始化
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab && tab.url) {
-            const normalized = normalizeDomain(tab.url);
-            if (!normalized) {
-                actualDomainEl.textContent = '此页面不支持该插件';
-            } else {
-                actualDomain = normalized;
-                actualDomainEl.textContent = actualDomain;
-                renderDomainChips();
-                loadAccounts();
+        if (tab && tab.url && !tab.url.startsWith('chrome://')) {
+            try {
+                const u = new URL(tab.url);
+                actualDomain = u.origin + u.pathname;
+            } catch(e) {
+                actualDomain = tab.url.split('?')[0].split('#')[0];
             }
+            actualDomainEl.textContent = actualDomain;
+            renderDomainChips();
+            loadAccounts();
         } else {
             actualDomainEl.textContent = '无法获取当前页面域名';
         }
@@ -140,17 +127,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         actualDomainEl.textContent = '获取域名异常';
     }
 
-    // ── 渲染共享域名列表 ────────────────────────────────────
+    // ── 渲染所有关联域名列表 ────────────────────────────────
     async function renderDomainChips() {
-        const shared = await getSharedDomains();
+        const accounts = await getAccountsForDomain(actualDomain);
+        const allDomains = new Set();
+        accounts.forEach(acc => {
+            (acc.domains || []).forEach(d => allDomains.add(d));
+        });
+
         domainChipsEl.innerHTML = '';
 
-        if (shared.length === 0) {
-            domainChipsEl.innerHTML = '<span class="chip-empty">暂无共享域名，可在下方输入框添加</span>';
+        if (allDomains.size === 0) {
+            domainChipsEl.innerHTML = '<span class="chip-empty">暂无绑定域名，新增账号后将自动绑定当前网址</span>';
             return;
         }
 
-        shared.forEach(domain => {
+        allDomains.forEach(domain => {
             const row = document.createElement('div');
             row.className = 'domain-chip-row-item';
             row.innerHTML = `

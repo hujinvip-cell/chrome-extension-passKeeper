@@ -262,16 +262,24 @@ html, body {
 
 /* ── 表格 ─────────────────────────────────────────────────── */
 #account-table-wrap {
+    --col-domain: 280px;
+    --col-username: 180px;
+    --col-password: 200px;
+    --col-remark: 1fr;
+    --col-actions: 150px;
+
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     transition: background 0.25s, border-color 0.25s;
 }
 
 .table-header {
     display: grid;
-    grid-template-columns: 200px 180px 200px 1fr 150px;
+    grid-template-columns: var(--col-domain) var(--col-username) var(--col-password) var(--col-remark) var(--col-actions);
+    min-width: 800px;
     padding: 0 20px;
     height: 42px;
     align-items: center;
@@ -288,6 +296,37 @@ html, body {
     text-transform: uppercase;
     color: var(--text-muted);
     padding: 0 8px;
+    position: relative;
+    user-select: none;
+}
+
+.col-resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 10;
+    transition: background 0.2s;
+}
+
+.col-resizer::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 25%;
+    bottom: 25%;
+    width: 1px;
+    background: var(--text-muted);
+    opacity: 0.3;
+    transition: all 0.2s;
+}
+
+.col-resizer:hover::after, .col-resizer.active::after {
+    background: var(--accent);
+    opacity: 1;
+    width: 2px;
 }
 
 /* ── 表格行 ───────────────────────────────────────────────── */
@@ -295,7 +334,8 @@ html, body {
 
 .table-row {
     display: grid;
-    grid-template-columns: 200px 180px 200px 1fr 150px;
+    grid-template-columns: var(--col-domain) var(--col-username) var(--col-password) var(--col-remark) var(--col-actions);
+    min-width: 800px;
     padding: 0 20px;
     min-height: 56px;
     align-items: center;
@@ -608,10 +648,6 @@ mark {
 /* ── 响应式 ───────────────────────────────────────────────── */
 @media (max-width: 900px) {
     .topbar, .search-wrap, .main-content { padding-left: 16px; padding-right: 16px; }
-    .table-header,
-    .table-row {
-        grid-template-columns: 160px 150px 160px 1fr 90px;
-    }
 }
 
 @media (max-width: 700px) {
