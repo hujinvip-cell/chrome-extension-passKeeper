@@ -1,6 +1,181 @@
-importScripts('crypto.js');
+importScripts('crypto.js', 'domain-utils.js');
 
 const PENDING_SAVE_ACCOUNT_KEY = 'pendingSaveAccount';
+
+async function getPendingSaveAccount() {
+    if (chrome.storage.session) {
+        const sessionRes = await storageGet(chrome.storage.session, [PENDING_SAVE_ACCOUNT_KEY]).catch(() => ({}));
+        if (sessionRes[PENDING_SAVE_ACCOUNT_KEY]) return sessionRes[PENDING_SAVE_ACCOUNT_KEY];
+    }
+
+    const localRes = await storageGet(chrome.storage.local, [PENDING_SAVE_ACCOUNT_KEY]).catch(() => ({}));
+    const pending = localRes[PENDING_SAVE_ACCOUNT_KEY] || null;
+    if (!pending) return null;
+
+    if (isEncrypted(pending.password)) {
+        try {
+            return {
+                ...pending,
+                password: await decryptPassword(pending.password)
+            };
+        } catch (err) {
+            console.warn('[AutoSave] Failed to decrypt pending account:', err);
+            await storageRemove(chrome.storage.local, PENDING_SAVE_ACCOUNT_KEY).catch(() => {});
+            return null;
+        }
+    }
+
+    return pending;
+}
+
+async function injectSavePromptIntoTopFrame(tabId, account) {
+    if (!tabId || !account?.username || !account?.password) return;
+
+    await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        args: [account],
+        func: (pendingAccount) => {
+            if (document.getElementById('passkeeper-save-prompt-root')) {
+                return { shown: false, reason: 'exists' };
+            }
+
+            const bodyText = (document.body?.innerText || '').toLowerCase();
+            const loggedIn = /\/js\d*\/main\.jsp/i.test(location.href)
+                || ['收件箱', '写信', '未读邮件', 'inbox', 'compose', 'logout', 'sign out']
+                    .some(k => bodyText.includes(k.toLowerCase()));
+            if (!loggedIn) return { shown: false, reason: 'not_logged_in' };
+
+            const root = document.createElement('div');
+            root.id = 'passkeeper-save-prompt-root';
+            root.style.cssText = [
+                'position:fixed',
+                'top:20px',
+                'right:20px',
+                'z-index:2147483647'
+            ].join(';');
+
+            const shadow = root.attachShadow({ mode: 'closed' });
+            const style = document.createElement('style');
+            style.textContent = `
+                .prompt-container {
+                    background: rgba(255, 255, 255, 0.92);
+                    backdrop-filter: blur(12px);
+                    -webkit-backdrop-filter: blur(12px);
+                    border: 1px solid rgba(15, 23, 42, 0.12);
+                    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+                    border-radius: 14px;
+                    padding: 16px 18px;
+                    width: 310px;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    color: #172033;
+                }
+                .header { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; margin-bottom: 8px; }
+                .content { font-size: 13px; color: #526078; line-height: 1.55; margin-bottom: 14px; }
+                .username { font-weight: 700; color: #2563eb; }
+                .actions { display: flex; justify-content: flex-end; gap: 8px; }
+                button { border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+                .btn-ignore { background: #eef2f7; color: #526078; }
+                .btn-save { background: #2563eb; color: white; font-weight: 650; }
+            `;
+
+            const container = document.createElement('div');
+            container.className = 'prompt-container';
+            container.innerHTML = `
+                <div class="header"><span>🔐</span><span>PassKeeper</span></div>
+                <div class="content">检测到新的账号登录信息，是否保存到密码库？<br>账号：<span class="username"></span></div>
+                <div class="actions">
+                    <button class="btn-ignore" id="btn-ignore">忽略</button>
+                    <button class="btn-save" id="btn-save">保存</button>
+                </div>
+            `;
+            container.querySelector('.username').textContent = pendingAccount.username;
+            shadow.append(style, container);
+            document.body.appendChild(root);
+
+            const closePrompt = () => {
+                root.remove();
+                chrome.runtime.sendMessage({ action: 'discardPendingSaveAccount' });
+            };
+
+            shadow.getElementById('btn-ignore').addEventListener('click', closePrompt);
+            shadow.getElementById('btn-save').addEventListener('click', () => {
+                const btn = shadow.getElementById('btn-save');
+                btn.textContent = '保存中...';
+                btn.disabled = true;
+                chrome.runtime.sendMessage({ action: 'saveAccount', account: pendingAccount }, (res) => {
+                    if (res?.success) {
+                        btn.textContent = '已保存';
+                        setTimeout(closePrompt, 800);
+                        return;
+                    }
+                    alert('保存失败: ' + (res?.error || '未知错误'));
+                    btn.textContent = '保存';
+                    btn.disabled = false;
+                });
+            });
+
+            return { shown: true };
+        }
+    }).catch((err) => {
+        console.debug('[AutoSave] inject prompt failed:', err?.message || err);
+    });
+}
+
+async function maybeInjectPendingSavePrompt(tabId) {
+    const pending = await getPendingSaveAccount();
+    if (!pending || Date.now() - pending.timestamp > 5 * 60 * 1000) return;
+    await injectSavePromptIntoTopFrame(tabId, pending);
+}
+
+function schedulePendingSaveChecks(tabId) {
+    if (!tabId) return;
+    [800, 1600, 3000, 6000, 10000].forEach(delay => {
+        setTimeout(() => {
+            maybeInjectPendingSavePrompt(tabId);
+            chrome.tabs.sendMessage(tabId, { action: 'checkPendingSaveAccountNow' }, { frameId: 0 }, () => {
+                // 页面跳转期间可能没有可接收的 content script，后续延迟检查会继续尝试。
+                void chrome.runtime.lastError;
+            });
+        }, delay);
+    });
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'complete' || changeInfo.url) {
+        maybeInjectPendingSavePrompt(tabId);
+    }
+});
+
+
+function storageSet(storageArea, data) {
+    return new Promise((resolve, reject) => {
+        storageArea.set(data, () => {
+            const err = chrome.runtime.lastError;
+            if (err) reject(new Error(err.message));
+            else resolve();
+        });
+    });
+}
+
+function storageGet(storageArea, keys) {
+    return new Promise((resolve, reject) => {
+        storageArea.get(keys, (res) => {
+            const err = chrome.runtime.lastError;
+            if (err) reject(new Error(err.message));
+            else resolve(res);
+        });
+    });
+}
+
+function storageRemove(storageArea, keys) {
+    return new Promise((resolve, reject) => {
+        storageArea.remove(keys, () => {
+            const err = chrome.runtime.lastError;
+            if (err) reject(new Error(err.message));
+            else resolve();
+        });
+    });
+}
 
 // ── 验证码后处理：从模型输出中提取最终答案 ─────────────────────
 function postProcess(text) {
@@ -94,7 +269,7 @@ async function callGemini(cfg, base64Data, mimeType) {
 
 // ── OpenAI-compatible API ─────────────────────────────────────
 async function callOpenAI(cfg, base64Data, mimeType) {
-    const baseUrl = (cfg.baseUrl || 'https://api.openai.com').replace(/\/$/, '');
+    const baseUrl = (cfg.openaiUrl || cfg.baseUrl || 'https://api.openai.com').replace(/\/$/, '');
     const headers = { 'Content-Type': 'application/json' };
     if (cfg.apiKey) headers['Authorization'] = `Bearer ${cfg.apiKey}`;
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -171,15 +346,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         (async () => {
             try {
-                const encryptedPassword = await encryptPassword(account.password);
-                await new Promise(resolve => chrome.storage.local.set({
-                    [PENDING_SAVE_ACCOUNT_KEY]: {
-                        username: account.username,
-                        password: encryptedPassword,
-                        domain: account.domain,
-                        timestamp: account.timestamp || Date.now()
-                    }
-                }, resolve));
+                const tabUrl = sender?.tab?.url || '';
+                const shouldUseTabUrl = /^https?:\/\//i.test(tabUrl);
+                const previousPending = await getPendingSaveAccount();
+                const shouldKeepSubmitted = !account.submitted
+                    && previousPending?.submitted
+                    && previousPending.username === account.username
+                    && previousPending.password === account.password;
+                const pending = {
+                    username: account.username,
+                    password: account.password,
+                    domain: shouldUseTabUrl ? tabUrl : account.domain,
+                    loginFrameDomain: shouldUseTabUrl && tabUrl !== account.domain ? account.domain : '',
+                    submitted: !!account.submitted || shouldKeepSubmitted,
+                    timestamp: account.timestamp || Date.now()
+                };
+
+                if (chrome.storage.session) {
+                    await storageSet(chrome.storage.session, { [PENDING_SAVE_ACCOUNT_KEY]: pending }).catch((err) => {
+                        console.debug('[AutoSave] Failed to write session pending account:', err?.message || err);
+                    });
+                }
+
+                const localPending = {
+                    ...pending,
+                    password: isEncrypted(pending.password) ? pending.password : await encryptPassword(pending.password)
+                };
+                await storageSet(chrome.storage.local, { [PENDING_SAVE_ACCOUNT_KEY]: localPending });
+
+                schedulePendingSaveChecks(sender?.tab?.id);
+
                 sendResponse({ success: true });
             } catch (err) {
                 console.error('[AutoSave] Failed to stage account:', err);
@@ -190,44 +386,75 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 
     if (request.action === 'getPendingSaveAccount') {
-        chrome.storage.local.get([PENDING_SAVE_ACCOUNT_KEY], (res) => {
-            sendResponse({ success: true, account: res[PENDING_SAVE_ACCOUNT_KEY] || null });
-        });
+        (async () => {
+            try {
+                sendResponse({ success: true, account: await getPendingSaveAccount() });
+            } catch (err) {
+                sendResponse({ success: false, error: err.message, account: null });
+            }
+        })();
         return true;
     }
 
     if (request.action === 'discardPendingSaveAccount') {
-        chrome.storage.local.remove(PENDING_SAVE_ACCOUNT_KEY, () => {
-            sendResponse({ success: true });
+        (async () => {
+            try {
+                if (chrome.storage.session) {
+                    await storageRemove(chrome.storage.session, PENDING_SAVE_ACCOUNT_KEY);
+                }
+                await storageRemove(chrome.storage.local, PENDING_SAVE_ACCOUNT_KEY);
+                sendResponse({ success: true });
+            } catch (err) {
+                sendResponse({ success: false, error: err.message });
+            }
+        })();
+        return true;
+    }
+
+    if (request.action === 'isAccountAlreadySaved') {
+        const { account } = request;
+        if (!account?.username || !account?.password || !account?.domain) {
+            sendResponse({ success: true, exists: false });
+            return false;
+        }
+
+        chrome.storage.local.get(['vault', DOMAIN_MATCH_MODES_KEY], async (res) => {
+            try {
+                const vault = res.vault || [];
+                const matchModes = res[DOMAIN_MATCH_MODES_KEY] || {};
+                const domainKey = pkGetDomainKey(account.domain, matchModes);
+                const matches = vault.filter(a =>
+                    a.username === account.username
+                    && (a.domains || []).some(d => pkDomainMatches(d, domainKey, matchModes))
+                );
+
+                for (const item of matches) {
+                    const savedPassword = isEncrypted(item.password)
+                        ? await decryptPassword(item.password)
+                        : item.password;
+                    if (savedPassword === account.password) {
+                        sendResponse({ success: true, exists: true });
+                        return;
+                    }
+                }
+                sendResponse({ success: true, exists: false });
+            } catch (err) {
+                console.warn('[AutoSave] Failed to check existing account:', err);
+                sendResponse({ success: false, exists: false, error: err.message });
+            }
         });
         return true;
     }
 
     if (request.action === 'saveAccount') {
         const { account } = request;
-        chrome.storage.local.get(['vault'], async (res) => {
+        chrome.storage.local.get(['vault', DOMAIN_MATCH_MODES_KEY], async (res) => {
             const vault = res.vault || [];
+            const matchModes = res[DOMAIN_MATCH_MODES_KEY] || {};
             
             // 域名匹配辅助函数
             const isMatch = (pattern, actualUrl) => {
-                if (!pattern || !actualUrl) return false;
-                if (pattern === actualUrl) return true;
-                if (pattern.includes('*')) {
-                    const regexStr = '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
-                    try { if (new RegExp(regexStr).test(actualUrl)) return true; } catch(e){}
-                }
-                if (!pattern.startsWith('http')) {
-                    try {
-                        const urlObj = new URL(actualUrl);
-                        if (urlObj.host === pattern || urlObj.host.endsWith('.' + pattern)) return true;
-                        const hostPath = urlObj.host + urlObj.pathname;
-                        if (hostPath.startsWith(pattern)) return true;
-                    } catch(e) {}
-                    if (actualUrl.includes(pattern)) return true;
-                } else {
-                    if (actualUrl.startsWith(pattern)) return true;
-                }
-                return false;
+                return pkDomainMatches(pattern, actualUrl, matchModes);
             };
 
             try {
@@ -237,9 +464,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 const encPwd = account.password && !account.password.iv
                     ? await encryptPassword(account.password)
                     : account.password;
+                const domainKey = pkGetDomainKey(account.domain, matchModes);
                 
                 // 检查是否已存在同域名下的同用户名账号 (支持通配符)
-                const existingIndex = vault.findIndex(a => a.username === account.username && (a.domains || []).some(d => isMatch(d, account.domain)));
+                const existingIndex = vault.findIndex(a => a.username === account.username && (a.domains || []).some(d => isMatch(d, domainKey)));
                 if (existingIndex >= 0) {
                     vault[existingIndex].password = encPwd;
                 } else {
@@ -248,12 +476,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         username: account.username,
                         password: encPwd,
                         remark: '自动保存',
-                        domains: [account.domain]
+                        domains: [domainKey]
                     });
                 }
                 
                 await new Promise(resolve => chrome.storage.local.set({ vault }, resolve));
-                await new Promise(resolve => chrome.storage.local.remove(PENDING_SAVE_ACCOUNT_KEY, resolve));
+                if (chrome.storage.session) {
+                    await storageRemove(chrome.storage.session, PENDING_SAVE_ACCOUNT_KEY);
+                }
+                await storageRemove(chrome.storage.local, PENDING_SAVE_ACCOUNT_KEY);
                 sendResponse({ success: true });
             } catch (err) {
                 console.error('[AutoSave] Failed to save account:', err);

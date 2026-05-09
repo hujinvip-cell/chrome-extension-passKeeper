@@ -68,6 +68,8 @@ const TRASH_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="1
 let allRows    = [];        // { id, domains, username, password, remark }[]
 let keyword    = '';        // 当前搜索关键词
 let revealedKeys = new Set(); // 已显示明文的行 ID (vault.id)
+let domainMatchModes = {};
+let settingsPageOpen = false;
 
 // ── 验证会话缓存（5 分钟内不重复验证）─────────────────
 const AUTH_SESSION_DURATION = 5 * 60 * 1000; // 5 分钟
@@ -108,13 +110,22 @@ function toggleTheme() {
     applyTheme(next);
 }
 
+function clearNode(node) {
+    while (node && node.firstChild) node.removeChild(node.firstChild);
+}
+
+function genId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
 // ── 从 storage 加载所有账号 ─────────────────────────────────
 function loadAllAccounts() {
-    chrome.storage.local.get(['vault'], (result) => {
+    chrome.storage.local.get(['vault', DOMAIN_MATCH_MODES_KEY], (result) => {
+        domainMatchModes = result[DOMAIN_MATCH_MODES_KEY] || {};
         const vault = result.vault || [];
         allRows = vault.map(acc => ({
             id: acc.id || Math.random().toString(36).slice(2, 9),
-            domain: acc.domains?.[0] || 'unknown', // 用于排序的基础域
+            domain: pkGetDomainKey(acc.domains?.[0] || 'unknown', domainMatchModes), // 用于排序的基础域
             domains: acc.domains || [],
             username: acc.username || '',
             password: acc.password || '',
@@ -124,6 +135,7 @@ function loadAllAccounts() {
         allRows.sort((a, b) => a.domain.localeCompare(b.domain));
         updateStats();
         renderTable();
+        renderDomainMatchSettings();
     });
 }
 
@@ -272,6 +284,8 @@ async function togglePasswordInPlace(id, btn) {
 
 // ── 渲染表格 ────────────────────────────────────────────────
 function renderTable() {
+    if (settingsPageOpen) return;
+
     const tableWrap  = document.getElementById('account-table-wrap');
     const tableBody  = document.getElementById('table-body');
     const emptyState = document.getElementById('empty-state');
@@ -535,6 +549,330 @@ searchClear.addEventListener('click', () => {
     renderTable();
 });
 
+// ── 设置页 ────────────────────────────────────────────────
+function showSettingsPage(show) {
+    settingsPageOpen = show;
+    document.querySelector('.search-wrap')?.classList.toggle('hidden', show);
+    document.getElementById('account-table-wrap')?.classList.toggle('hidden', show);
+    document.getElementById('empty-state')?.classList.add('hidden');
+    document.getElementById('no-result')?.classList.add('hidden');
+    document.getElementById('settings-page')?.classList.toggle('hidden', !show);
+    if (!show) renderTable();
+}
+
+document.getElementById('btn-settings-page')?.addEventListener('click', () => {
+    showSettingsPage(true);
+    renderDomainMatchSettings();
+    loadModelConfigs();
+});
+
+document.getElementById('btn-settings-back')?.addEventListener('click', () => {
+    showSettingsPage(false);
+});
+
+function renderDomainMatchSettings() {
+    const wrap = document.getElementById('domain-match-settings');
+    if (!wrap) return;
+    clearNode(wrap);
+
+    const originSet = new Set(
+        allRows
+            .flatMap(row => row.domains || [])
+            .map(domain => pkGetOrigin(domain))
+            .filter(Boolean)
+    );
+
+    const sourceUrl = new URLSearchParams(location.search).get('sourceUrl');
+    const sourceOrigin = sourceUrl ? pkGetOrigin(sourceUrl) : '';
+    if (sourceOrigin) originSet.add(sourceOrigin);
+
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+        const activeOrigin = tab?.url && !tab.url.startsWith('chrome-extension://')
+            ? pkGetOrigin(tab.url)
+            : '';
+        if (activeOrigin) originSet.add(activeOrigin);
+        renderDomainMatchRows(wrap, Array.from(originSet).sort());
+    });
+}
+
+function getSourceUrlForOrigin(origin) {
+    const sourceUrl = new URLSearchParams(location.search).get('sourceUrl');
+    if (sourceUrl && pkGetOrigin(sourceUrl) === origin) return sourceUrl;
+
+    const rowDomain = allRows
+        .flatMap(row => row.domains || [])
+        .find(domain => pkGetOrigin(domain) === origin && pkGetFirstPathKey(domain) !== origin);
+    return rowDomain || origin;
+}
+
+function storageGet(keys) {
+    return new Promise(resolve => chrome.storage.local.get(keys, resolve));
+}
+
+function storageSet(values) {
+    return new Promise(resolve => chrome.storage.local.set(values, resolve));
+}
+
+async function saveDomainMatchMode(origin, enabled) {
+    const next = { ...domainMatchModes };
+    let nextVault = null;
+
+    if (enabled) {
+        next[origin] = DOMAIN_MATCH_MODE_FIRST_PATH;
+        const targetKey = pkGetFirstPathKey(getSourceUrlForOrigin(origin));
+
+        if (targetKey && targetKey !== origin) {
+            const { vault = [] } = await storageGet(['vault']);
+            nextVault = vault.map((account) => {
+                const domains = account.domains || [];
+                const migratedDomains = domains.map((domain) => {
+                    if (pkGetOrigin(domain) !== origin) return domain;
+                    const isOriginOnly = pkNormalizeUrlInput(domain) === origin;
+                    const isSameFirstPath = pkGetFirstPathKey(domain) === targetKey;
+                    return isOriginOnly || isSameFirstPath ? targetKey : domain;
+                });
+                return {
+                    ...account,
+                    domains: Array.from(new Set(migratedDomains))
+                };
+            });
+        }
+    } else {
+        delete next[origin];
+    }
+
+    const payload = { [DOMAIN_MATCH_MODES_KEY]: next };
+    if (nextVault) payload.vault = nextVault;
+    await storageSet(payload);
+    domainMatchModes = next;
+    loadAllAccounts();
+}
+
+function renderDomainMatchRows(wrap, origins) {
+    clearNode(wrap);
+
+    if (!origins.length) {
+        const empty = document.createElement('div');
+        empty.className = 'settings-empty';
+        empty.textContent = '暂无可配置域名';
+        wrap.appendChild(empty);
+        return;
+    }
+
+    origins.forEach((origin) => {
+        const row = document.createElement('div');
+        row.className = 'domain-match-row';
+
+        const info = document.createElement('div');
+        info.className = 'domain-match-info';
+        const title = document.createElement('span');
+        title.className = 'domain-match-title';
+        title.textContent = origin;
+        const desc = document.createElement('span');
+        desc.className = 'domain-match-desc';
+        desc.textContent = domainMatchModes[origin] === DOMAIN_MATCH_MODE_FIRST_PATH
+            ? '当前按域名 + 第一个路径段匹配'
+            : '当前按域名匹配，登录前后路径变化仍会命中';
+        info.append(title, desc);
+
+        const label = document.createElement('label');
+        label.className = 'toggle-switch';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = domainMatchModes[origin] === DOMAIN_MATCH_MODE_FIRST_PATH;
+        const slider = document.createElement('span');
+        slider.className = 'slider';
+        label.append(input, slider);
+
+        input.addEventListener('change', async () => {
+            input.disabled = true;
+            await saveDomainMatchMode(origin, input.checked);
+        });
+
+        row.append(info, label);
+        wrap.appendChild(row);
+    });
+}
+
+// ── 设置页：模型配置 ────────────────────────────────────────
+const TYPE_LABELS = { ollama: 'Ollama', gemini: 'Gemini', openai: 'OpenAI-compatible' };
+let modelConfigs = [];
+let activeModelId = null;
+let editingModelId = null;
+
+function migrateOldModel(stored) {
+    if ((stored.modelConfigs || []).length > 0) return;
+    const old = stored.ollamaModel;
+    if (!old) return;
+    const cfg = {
+        id: genId(),
+        name: '本地 Ollama',
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        model: old
+    };
+    chrome.storage.local.set({ modelConfigs: [cfg], activeModelId: cfg.id });
+}
+
+function renderActiveSelect() {
+    const select = document.getElementById('select-active-model');
+    if (!select) return;
+    clearNode(select);
+    if (!modelConfigs.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '未配置模型';
+        select.appendChild(option);
+        return;
+    }
+    modelConfigs.forEach((cfg) => {
+        const option = document.createElement('option');
+        option.value = cfg.id;
+        option.selected = cfg.id === activeModelId;
+        option.textContent = `${cfg.name} (${TYPE_LABELS[cfg.type] || cfg.type})`;
+        select.appendChild(option);
+    });
+}
+
+function renderModelList() {
+    const list = document.getElementById('model-config-list');
+    if (!list) return;
+    clearNode(list);
+
+    modelConfigs.forEach((cfg) => {
+        const row = document.createElement('div');
+        row.className = 'mcl-row' + (cfg.id === activeModelId ? ' mcl-active' : '');
+
+        const info = document.createElement('div');
+        info.className = 'mcl-info';
+        const name = document.createElement('span');
+        name.className = 'mcl-name';
+        name.textContent = cfg.name;
+        const type = document.createElement('span');
+        type.className = 'mcl-type';
+        type.textContent = `${TYPE_LABELS[cfg.type] || cfg.type} · ${cfg.model}`;
+        info.append(name, type);
+
+        const btns = document.createElement('div');
+        btns.className = 'mcl-btns';
+        const editBtn = document.createElement('button');
+        editBtn.className = 'mcl-btn';
+        editBtn.title = '编辑';
+        editBtn.dataset.id = cfg.id;
+        editBtn.dataset.action = 'edit';
+        editBtn.innerHTML = LINK_ICON;
+        const delBtn = document.createElement('button');
+        delBtn.className = 'mcl-btn mcl-del';
+        delBtn.title = '删除';
+        delBtn.dataset.id = cfg.id;
+        delBtn.dataset.action = 'del';
+        delBtn.innerHTML = TRASH_ICON;
+        btns.append(editBtn, delBtn);
+
+        row.append(info, btns);
+        list.appendChild(row);
+    });
+}
+
+function loadModelConfigs() {
+    chrome.storage.local.get(['modelConfigs', 'activeModelId', 'ollamaModel'], (stored) => {
+        migrateOldModel(stored);
+        chrome.storage.local.get(['modelConfigs', 'activeModelId'], (s2) => {
+            modelConfigs = s2.modelConfigs || [];
+            activeModelId = s2.activeModelId || (modelConfigs[0]?.id ?? null);
+            renderActiveSelect();
+            renderModelList();
+        });
+    });
+}
+
+function updateModelFormFields(type) {
+    document.querySelectorAll('.mcf-ollama').forEach(el =>
+        el.classList.toggle('hidden', type !== 'ollama'));
+    document.querySelectorAll('.mcf-api-key').forEach(el =>
+        el.classList.toggle('hidden', type === 'ollama'));
+    document.querySelectorAll('.mcf-openai').forEach(el =>
+        el.classList.toggle('hidden', type !== 'openai'));
+}
+
+function openModelForm(id) {
+    editingModelId = id || null;
+    const cfg = id ? modelConfigs.find(c => c.id === id) : null;
+    document.getElementById('mcf-name').value = cfg?.name || '';
+    document.getElementById('mcf-base-url').value = cfg?.baseUrl || 'http://localhost:11434';
+    document.getElementById('mcf-api-key').value = cfg?.apiKey || '';
+    document.getElementById('mcf-openai-url').value = cfg?.openaiUrl || '';
+    document.getElementById('mcf-model').value = cfg?.model || '';
+    document.getElementById('mcf-type').value = cfg?.type || 'ollama';
+    updateModelFormFields(document.getElementById('mcf-type').value);
+    document.getElementById('model-cfg-form').classList.remove('hidden');
+    document.getElementById('btn-add-model-cfg').classList.add('hidden');
+}
+
+document.getElementById('select-active-model')?.addEventListener('change', (e) => {
+    activeModelId = e.target.value;
+    chrome.storage.local.set({ activeModelId });
+    renderModelList();
+});
+
+document.getElementById('mcf-type')?.addEventListener('change', (e) => updateModelFormFields(e.target.value));
+document.getElementById('btn-add-model-cfg')?.addEventListener('click', () => openModelForm(null));
+document.getElementById('mcf-cancel')?.addEventListener('click', () => {
+    document.getElementById('model-cfg-form').classList.add('hidden');
+    document.getElementById('btn-add-model-cfg').classList.remove('hidden');
+    editingModelId = null;
+});
+
+document.getElementById('model-config-list')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mcl-btn');
+    if (!btn) return;
+    if (btn.dataset.action === 'edit') openModelForm(btn.dataset.id);
+    if (btn.dataset.action === 'del') deleteModelCfg(btn.dataset.id);
+});
+
+document.getElementById('mcf-save')?.addEventListener('click', () => {
+    const name = document.getElementById('mcf-name').value.trim();
+    const type = document.getElementById('mcf-type').value;
+    const model = document.getElementById('mcf-model').value.trim();
+    if (!name || !model) { alert('名称和模型名不能为空'); return; }
+
+    const cfg = {
+        id: editingModelId || genId(),
+        name,
+        type,
+        model,
+        baseUrl: document.getElementById('mcf-base-url').value.trim(),
+        apiKey: document.getElementById('mcf-api-key').value.trim(),
+        openaiUrl: document.getElementById('mcf-openai-url').value.trim(),
+    };
+
+    if (editingModelId) {
+        const idx = modelConfigs.findIndex(c => c.id === editingModelId);
+        if (idx >= 0) modelConfigs[idx] = cfg;
+    } else {
+        modelConfigs.push(cfg);
+        if (!activeModelId) activeModelId = cfg.id;
+    }
+
+    chrome.storage.local.set({ modelConfigs, activeModelId }, () => {
+        document.getElementById('model-cfg-form').classList.add('hidden');
+        document.getElementById('btn-add-model-cfg').classList.remove('hidden');
+        editingModelId = null;
+        renderActiveSelect();
+        renderModelList();
+    });
+});
+
+function deleteModelCfg(id) {
+    if (!confirm('确定删除此模型配置吗？')) return;
+    modelConfigs = modelConfigs.filter(c => c.id !== id);
+    if (activeModelId === id) activeModelId = modelConfigs[0]?.id ?? null;
+    chrome.storage.local.set({ modelConfigs, activeModelId }, () => {
+        renderActiveSelect();
+        renderModelList();
+    });
+}
+
 // ── 安全验证设置面板 ───────────────────────────────
 
 async function openAuthSetupModal() {
@@ -781,7 +1119,7 @@ document.getElementById('btn-theme').addEventListener('click', toggleTheme);
 
 // ── storage 变更监听 ───────────────────────────────────
 chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.accounts) {
+    if (area === 'local' && (changes.accounts || changes[DOMAIN_MATCH_MODES_KEY])) {
         loadAllAccounts();
     }
 });
@@ -895,6 +1233,9 @@ chrome.storage.onChanged.addListener((changes) => {
         console.log('[Manager] Storage changed, refreshing...');
         loadAllAccounts();
     }
+    if (changes.modelConfigs || changes.activeModelId) {
+        loadModelConfigs();
+    }
 });
 
 (async () => {
@@ -904,5 +1245,6 @@ chrome.storage.onChanged.addListener((changes) => {
     await migrateToEncrypted().catch(e => console.warn('[Crypto] 迁移检查失败', e));
     initTableEvents();
     initColumnResizers();
+    loadModelConfigs();
     loadAllAccounts();
 })();

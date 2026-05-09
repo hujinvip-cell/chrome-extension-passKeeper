@@ -29,6 +29,12 @@
                         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                     </svg>
                 </button>
+                <button id="btn-settings-page" class="btn-auth-setup" title="设置">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
                 <button id="btn-theme" class="btn-theme" title="切换主题" aria-label="切换亮/暗主题">
                     <!-- 图标由 JS 动态填充 -->
                 </button>
@@ -83,6 +89,73 @@
                 <div class="empty-title">未找到匹配结果</div>
                 <div class="empty-hint">请尝试其他关键词。</div>
             </div>
+
+            <section id="settings-page" class="settings-page hidden">
+                <div class="settings-page-header">
+                    <div>
+                        <h2>设置</h2>
+                        <p>管理地址匹配策略和验证码模型配置。</p>
+                    </div>
+                    <button id="btn-settings-back" class="btn-text">返回账号列表</button>
+                </div>
+
+                <div class="settings-grid">
+                    <section class="settings-panel">
+                        <div class="settings-panel-title">
+                            <h3>地址匹配</h3>
+                            <p>默认按域名匹配；开启后，该域名按第一个路径段隔离。</p>
+                        </div>
+                        <div id="domain-match-settings" class="domain-match-settings"></div>
+                    </section>
+
+                    <section class="settings-panel">
+                        <div class="settings-panel-title">
+                            <h3>模型配置</h3>
+                            <p>用于验证码识别的本地或云端视觉模型。</p>
+                        </div>
+                        <div class="setting-row">
+                            <label for="select-active-model">当前使用</label>
+                            <select id="select-active-model" class="settings-select"></select>
+                        </div>
+                        <div id="model-config-list" class="model-config-list"></div>
+                        <button id="btn-add-model-cfg" class="btn-primary settings-add-btn">添加模型配置</button>
+                        <div id="model-cfg-form" class="model-cfg-form hidden">
+                            <div class="setting-row">
+                                <label>名称</label>
+                                <input type="text" id="mcf-name" placeholder="如: 本地 Qwen3">
+                            </div>
+                            <div class="setting-row">
+                                <label>类型</label>
+                                <select id="mcf-type">
+                                    <option value="ollama">Ollama（本地）</option>
+                                    <option value="gemini">Gemini API</option>
+                                    <option value="openai">OpenAI-compatible</option>
+                                </select>
+                            </div>
+                            <div class="setting-row mcf-ollama">
+                                <label>地址</label>
+                                <input type="text" id="mcf-base-url" placeholder="http://localhost:11434">
+                            </div>
+                            <div class="setting-row mcf-api-key hidden">
+                                <label>API Key</label>
+                                <input type="password" id="mcf-api-key" placeholder="sk-... 或 AIza...">
+                            </div>
+                            <div class="setting-row mcf-openai hidden">
+                                <label>Base URL</label>
+                                <input type="text" id="mcf-openai-url" placeholder="https://api.openai.com">
+                            </div>
+                            <div class="setting-row">
+                                <label>模型名</label>
+                                <input type="text" id="mcf-model" placeholder="如: qwen3-vl:8b">
+                            </div>
+                            <div class="mcf-actions">
+                                <button id="mcf-cancel" class="btn-text">取消</button>
+                                <button id="mcf-save" class="btn-primary">保存</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -166,6 +239,7 @@
 
     <script src="crypto.js"></script>
     <script src="auth.js"></script>
+    <script src="domain-utils.js"></script>
     <script src="manager.js"></script>
 </body>
 </html>

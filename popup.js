@@ -41,11 +41,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 当前真实域名（浏览器地址栏）
     let actualDomain = '';
+    let domainMatchModes = {};
     // 编辑状态
     let editingId = null; // null = 新增，id = 编辑对应账号 ID
 
     function normalizeDomain(input) {
-        return (input || '').trim();
+        return pkGetDomainKey(input, domainMatchModes);
     }
 
     function clearNode(node) {
@@ -64,24 +65,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 域名匹配辅助函数
     const isMatch = (pattern, actualUrl) => {
-        if (!pattern || !actualUrl) return false;
-        if (pattern === actualUrl) return true;
-        if (pattern.includes('*')) {
-            const regexStr = '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
-            try { if (new RegExp(regexStr).test(actualUrl)) return true; } catch(e){}
-        }
-        if (!pattern.startsWith('http')) {
-            try {
-                const urlObj = new URL(actualUrl);
-                if (urlObj.host === pattern || urlObj.host.endsWith('.' + pattern)) return true;
-                const hostPath = urlObj.host + urlObj.pathname;
-                if (hostPath.startsWith(pattern)) return true;
-            } catch(e) {}
-            if (actualUrl.includes(pattern)) return true;
-        } else {
-            if (actualUrl.startsWith(pattern)) return true;
-        }
-        return false;
+        return pkDomainMatches(pattern, actualUrl, domainMatchModes);
     };
 
     // ── 工具函数 ───────────────────────────────────────────
@@ -139,14 +123,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化
     try {
+        const modeRes = await new Promise(resolve => chrome.storage.local.get([DOMAIN_MATCH_MODES_KEY], resolve));
+        domainMatchModes = modeRes[DOMAIN_MATCH_MODES_KEY] || {};
+
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab && tab.url && !tab.url.startsWith('chrome://')) {
-            try {
-                const u = new URL(tab.url);
-                actualDomain = u.origin + u.pathname;
-            } catch(e) {
-                actualDomain = tab.url.split('?')[0].split('#')[0];
-            }
+            actualDomain = pkGetDomainKey(tab.url, domainMatchModes);
             actualDomainEl.textContent = actualDomain;
             renderDomainChips();
             loadAccounts();
@@ -818,7 +800,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadModelConfigs();
 
     // ── 打开账号管理后台 ─────────────────────────────────────
-    document.getElementById('open-manager').addEventListener('click', () => {
-        chrome.tabs.create({ url: chrome.runtime.getURL('manager.html') });
+    document.getElementById('open-manager').addEventListener('click', async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const suffix = tab?.url ? `?sourceUrl=${encodeURIComponent(tab.url)}` : '';
+        chrome.tabs.create({ url: chrome.runtime.getURL(`manager.html${suffix}`) });
     });
 });

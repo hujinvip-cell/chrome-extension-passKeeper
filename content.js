@@ -2,16 +2,30 @@
 function getBase64Image(imgElement) {
     return new Promise((resolve, reject) => {
         try {
+            const width = imgElement.naturalWidth || imgElement.width || imgElement.clientWidth;
+            const height = imgElement.naturalHeight || imgElement.height || imgElement.clientHeight;
+            if (!width || !height) {
+                reject(new Error('EMPTY_IMAGE'));
+                return;
+            }
             const canvas = document.createElement("canvas");
-            canvas.width = imgElement.width || imgElement.naturalWidth;
-            canvas.height = imgElement.height || imgElement.naturalHeight;
+            canvas.width = width;
+            canvas.height = height;
             const ctx = canvas.getContext("getContext" in canvas ? "2d" : "webgl") || canvas.getContext("2d");
             ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
             const dataURL = canvas.toDataURL("image/png");
+            if (!/^data:image\/[^;]+;base64,[A-Za-z0-9+/=]+$/.test(dataURL)) {
+                reject(new Error('INVALID_IMAGE_DATA'));
+                return;
+            }
             resolve(dataURL);
         } catch (e) {
             // 如果图片有跨域问题，可能无法直接 drawImage
             console.warn("Canvas drawImage failed, trying fetch...", e);
+            if (!imgElement.src || imgElement.src === 'data:,') {
+                reject(new Error('INVALID_IMAGE_SRC'));
+                return;
+            }
             fetch(imgElement.src)
                 .then(res => res.blob())
                 .then(blob => {
@@ -26,7 +40,14 @@ function getBase64Image(imgElement) {
 
 // 寻找可能的验证码图片
 function findCaptchaImage() {
-    const images = Array.from(document.querySelectorAll('img'));
+    const images = Array.from(document.querySelectorAll('img')).filter(img => {
+        if (!isFieldVisible(img)) return false;
+        const src = img.currentSrc || img.src || '';
+        if (!src || src === 'data:,') return false;
+        const width = img.naturalWidth || img.width || img.clientWidth;
+        const height = img.naturalHeight || img.height || img.clientHeight;
+        return width >= 20 && height >= 16;
+    });
     
     // 按启发式规则查找
     const keywords = ['captcha', 'code', 'yzm', 'verify', 'vcode'];
@@ -41,58 +62,73 @@ function findCaptchaImage() {
         }
     }
 
-    // 如果没找到符合关键词的，找一个点击后会刷新的图片，或者在密码框附近的图片
-    const passwordInput = document.querySelector('input[type="password"]');
-    if (passwordInput) {
-        // 查找密码框之后的 img
-        const allElements = Array.from(document.querySelectorAll('*'));
-        const pwdIndex = allElements.indexOf(passwordInput);
-        for (let i = pwdIndex + 1; i < allElements.length; i++) {
-            if (allElements[i].tagName === 'IMG') {
-                return allElements[i];
-            }
-        }
-    }
     return null;
 }
 
 // 寻找输入框
 function findInputs() {
-    const passwordInput = document.querySelector('input[type="password"]');
+    const fields = Array.from(document.querySelectorAll('input, textarea'))
+        .filter(input => !input.disabled && !input.readOnly && isFieldVisible(input));
+    const passwordCandidates = fields
+        .map(input => {
+            const meta = `${input.type || ''} ${input.name || ''} ${input.id || ''} ${input.className || ''} ${input.placeholder || ''} ${input.autocomplete || ''}`.toLowerCase();
+            const isPasswordLike = input.type === 'password'
+                || meta.includes('password')
+                || meta.includes('passwd')
+                || meta.includes('pwd')
+                || meta.includes('密码');
+            if (!isPasswordLike) return null;
+
+            const valueScore = input.value ? 100 : 0;
+            const typeScore = input.type === 'password' ? 20 : 0;
+            const metaScore = meta.includes('password') || meta.includes('passwd') || meta.includes('pwd') || meta.includes('密码') ? 10 : 0;
+            return { input, score: valueScore + typeScore + metaScore };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.score - a.score);
+    const passwordInput = passwordCandidates[0]?.input || null;
     let usernameInput = null;
     let captchaInput = null;
 
     if (passwordInput) {
         // 往前找 text 或 email 输入框作为用户名
         const form = passwordInput.closest('form') || document.body;
-        const textInputs = Array.from(form.querySelectorAll('input[type="text"], input[type="email"], input:not([type])'));
+        let textInputs = fields.filter(input => {
+            if (input === passwordInput) return false;
+            const type = (input.type || 'text').toLowerCase();
+            if (!['text', 'email', 'tel', 'number', 'search'].includes(type)) return false;
+            return form === document.body || form.contains(input);
+        });
+        if (!textInputs.length && form !== document.body) {
+            textInputs = fields.filter(input => {
+                if (input === passwordInput) return false;
+                const type = (input.type || 'text').toLowerCase();
+                return ['text', 'email', 'tel', 'number', 'search'].includes(type);
+            });
+        }
+
+        const usernameKeywords = ['user', 'account', 'email', 'mail', 'phone', 'mobile', 'login', 'uid', 'username', '帐号', '账号', '邮箱', '手机'];
+        usernameInput = textInputs.find(input => {
+            const meta = `${input.name || ''} ${input.id || ''} ${input.className || ''} ${input.placeholder || ''} ${input.autocomplete || ''}`.toLowerCase();
+            return usernameKeywords.some(k => meta.includes(k.toLowerCase()));
+        }) || null;
         
         for (const input of textInputs) {
             // 排除隐藏和只读
             if (input.type === 'hidden' || input.readOnly || input.disabled) continue;
             
             // 如果这个 text input 在 password 之前，很可能是用户名
-            if (input.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_FOLLOWING) {
+            if (!usernameInput && input.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_FOLLOWING) {
                 usernameInput = input;
             } 
             // 如果在 password 之后，且长度较短，可能是验证码
             else if (passwordInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                const idNameClass = (input.id + input.name + input.className).toLowerCase();
-                if (idNameClass.includes('code') || idNameClass.includes('captcha') || idNameClass.includes('yzm') || input.maxLength <= 6) {
+                const idNameClass = `${input.id || ''} ${input.name || ''} ${input.className || ''} ${input.placeholder || ''}`.toLowerCase();
+                if (idNameClass.includes('code') || idNameClass.includes('captcha') || idNameClass.includes('yzm') || idNameClass.includes('验证码')) {
                     captchaInput = input;
                     break;
                 }
             }
-        }
-        
-        // 如果没有找到特定的验证码框，尝试再次寻找 password 之后的 text 框
-        if (!captchaInput) {
-             for (const input of textInputs) {
-                 if (passwordInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                     captchaInput = input;
-                     break;
-                 }
-             }
         }
     }
 
@@ -111,6 +147,15 @@ function simulateInput(element, value) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'ping') {
+        sendResponse({ success: true });
+        return;
+    }
+
+    if (request.action === 'checkPendingSaveAccountNow') {
+        if (isTopWindow()) {
+            checkLoginSuccessAndPrompt();
+            scheduleTopWindowPendingPromptChecks();
+        }
         sendResponse({ success: true });
         return;
     }
@@ -160,10 +205,14 @@ function handleFillAccount(request, sendResponse) {
 
     // 查找验证码图片
     const captchaImage = findCaptchaImage();
+    const shouldRecognizeCaptcha = Boolean(captchaImage && captchaInput);
 
-    if (captchaImage && captchaInput) {
+    if (shouldRecognizeCaptcha) {
         // 获取验证码图片 Base64
         getBase64Image(captchaImage).then(base64 => {
+            if (!base64 || base64 === 'data:,' || !base64.includes(',')) {
+                throw new Error('INVALID_CAPTCHA_IMAGE');
+            }
             // 发送给 background 去识别
             chrome.runtime.sendMessage({ action: 'recognizeCaptcha', base64Image: base64 }, (response) => {
                 if (response && response.success) {
@@ -180,9 +229,11 @@ function handleFillAccount(request, sendResponse) {
                 if (sendResponse) sendResponse({ success: true });
             });
         }).catch(e => {
-            console.error('Failed to get captcha image base64:', e);
-            alert('提取验证码图片失败');
-            if (sendResponse) sendResponse({ success: false, error: e.message });
+            console.warn('[AutoLogin] 跳过无效验证码图片，继续登录:', e.message);
+            if (autoLogin) {
+                setTimeout(autoSubmit, 500);
+            }
+            if (sendResponse) sendResponse({ success: true, skippedCaptcha: true });
         });
     } else {
         // 没有验证码，直接尝试提交
@@ -423,28 +474,249 @@ function setFieldChecked(el, checked) {
 
 // 监听表单提交
 document.addEventListener('submit', (e) => {
-    captureCredentials();
+    captureCredentials({ submitted: true });
 }, true);
 
 // 监听按键：回车键提交
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-        captureCredentials();
+        captureCredentials({ submitted: true });
     }
 }, true);
 
+function findLikelySubmitTarget(target) {
+    const loginKeywords = ['登录', '登陆', 'login', 'sign in', 'signin', 'log in', 'submit', '进入', '邮箱登录'];
+    let el = target instanceof Element ? target : null;
+    for (let depth = 0; el && el !== document.body && depth < 6; depth += 1, el = el.parentElement) {
+        const tag = el.tagName.toLowerCase();
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        const type = (el.getAttribute('type') || '').toLowerCase();
+        const meta = [
+            el.textContent || '',
+            el.getAttribute('value') || '',
+            el.getAttribute('aria-label') || '',
+            el.getAttribute('title') || '',
+            el.id || '',
+            el.className || '',
+            role,
+            type
+        ].join(' ').toLowerCase().replace(/\s+/g, '');
+
+        if (tag === 'button' || tag === 'a' || role === 'button' || type === 'submit' || type === 'button') return el;
+        if (loginKeywords.some(k => meta.includes(k.replace(/\s+/g, '').toLowerCase()))) return el;
+    }
+    return null;
+}
+
 // 监听可能的点击登录按钮（放宽条件，只要点击按钮且密码框有值，就暂存）
 document.addEventListener('click', (e) => {
-    const btn = e.target.closest('button, input[type="button"], input[type="submit"], a, div[role="button"], span[role="button"]');
+    const btn = findLikelySubmitTarget(e.target);
     if (!btn) return;
-    captureCredentials();
+    captureCredentials({ submitted: true });
 }, true);
 
-function captureCredentials() {
+let captureTimer = null;
+function scheduleCaptureCredentials(e) {
+    if (e && !e.isTrusted) return;
+    clearTimeout(captureTimer);
+    captureTimer = setTimeout(() => captureCredentials({ submitted: false }), 200);
+}
+
+['input', 'change', 'blur', 'pointerdown', 'mousedown', 'touchend'].forEach((eventName) => {
+    document.addEventListener(eventName, scheduleCaptureCredentials, true);
+});
+
+function scheduleLoginSuccessChecks() {
+    [800, 2500, 5000, 9000].forEach(delay => {
+        setTimeout(checkLoginSuccessAndPrompt, delay);
+    });
+}
+
+function scheduleFallbackSavePrompt(account) {
+    setTimeout(() => {
+        if (!chrome.runtime?.id) return;
+        if (document.getElementById('passkeeper-save-prompt-root')) return;
+
+        maybeShowSavePrompt(account, '本页捕获信息');
+    }, 1200);
+}
+
+function schedulePostSubmitPromptChecks(account) {
+    [2500, 5000, 9000, 15000].forEach(delay => {
+        setTimeout(() => {
+            if (!chrome.runtime?.id) return;
+            if (document.getElementById('passkeeper-save-prompt-root')) return;
+            maybeShowSavePrompt(account, '登录后兜底检查');
+        }, delay);
+    });
+}
+
+function schedulePendingSavePromptPolling() {
+    [300, 1000, 2500, 5000, 9000].forEach(delay => {
+        setTimeout(checkLoginSuccessAndPrompt, delay);
+    });
+}
+
+function scheduleStoredFallbackPrompt() {
+    setTimeout(() => {
+        if (!chrome.runtime?.id) return;
+        if (document.getElementById('passkeeper-save-prompt-root')) return;
+        chrome.runtime.sendMessage({ action: 'getPendingSaveAccount' }, (res) => {
+            const pending = res?.account;
+            if (!pending) return;
+            if (Date.now() - pending.timestamp > 5 * 60 * 1000) return;
+            if (!pending.submitted && !isLikelyLoggedInPage()) return;
+
+            maybeShowSavePrompt(pending, '后台暂存信息');
+        });
+    }, 1800);
+}
+
+function scheduleTopWindowPendingPromptChecks() {
+    if (!isTopWindow()) return;
+    [300, 1200, 3000, 6000, 10000].forEach(delay => {
+        setTimeout(() => {
+            if (!chrome.runtime?.id) return;
+            if (document.getElementById('passkeeper-save-prompt-root')) return;
+            chrome.runtime.sendMessage({ action: 'getPendingSaveAccount' }, (res) => {
+                const pending = res?.account;
+                if (!pending) return;
+                if (Date.now() - pending.timestamp > 5 * 60 * 1000) return;
+                if (!pending.submitted && !isLikelyLoggedInPage()) return;
+                maybeShowSavePrompt(pending, '顶层页面加载检查');
+            });
+        }, delay);
+    });
+}
+
+function samePageAsCaptured(account) {
+    const current = window.location.origin + window.location.pathname;
+    return account.domain === current || account.loginFrameDomain === current;
+}
+
+function hasVisiblePasswordInput() {
+    return Array.from(document.querySelectorAll('input, textarea')).some((input) => {
+        if (!isFieldVisible(input)) return false;
+        const meta = `${input.type || ''} ${input.name || ''} ${input.id || ''} ${input.className || ''} ${input.placeholder || ''} ${input.autocomplete || ''}`.toLowerCase();
+        return input.type === 'password'
+            || meta.includes('password')
+            || meta.includes('passwd')
+            || meta.includes('pwd')
+            || meta.includes('密码');
+    });
+}
+
+function isTopWindow() {
+    try {
+        return window.self === window.top;
+    } catch (e) {
+        return false;
+    }
+}
+
+function notifyTopWindowPendingSaved() {
+    if (isTopWindow()) return;
+    try {
+        window.top.postMessage({ source: 'PassKeeper', type: 'pending-save-account' }, '*');
+    } catch (e) {
+        console.warn('[PassKeeper] 无法通知顶层页面检查暂存账号:', e);
+    }
+}
+
+function hasVisibleLoginFrame(account) {
+    if (!isTopWindow() || !account?.loginFrameDomain) return false;
+
+    let frameOrigin = '';
+    try {
+        frameOrigin = new URL(account.loginFrameDomain).origin;
+    } catch (e) {
+        return false;
+    }
+
+    return Array.from(document.querySelectorAll('iframe')).some((frame) => {
+        if (!isFieldVisible(frame)) return false;
+        try {
+            return frame.src && new URL(frame.src).origin === frameOrigin;
+        } catch (e) {
+            return false;
+        }
+    });
+}
+
+function hasLikelyLoginError() {
+    const text = (document.body?.innerText || '').toLowerCase();
+    const keywords = [
+        '密码错误', '账号错误', '用户名错误', '登录失败', '认证失败', '验证码错误',
+        'invalid password', 'invalid username', 'login failed', 'authentication failed'
+    ];
+    return keywords.some(k => text.includes(k.toLowerCase()));
+}
+
+function isLikelyLoggedInPage() {
+    const url = window.location.href;
+    if (/\/js\d*\/main\.jsp/i.test(url)) return true;
+    const text = (document.body?.innerText || '').toLowerCase();
+    const keywords = ['收件箱', '写信', '未读邮件', '退出', 'inbox', 'compose', 'sign out', 'logout'];
+    return keywords.some(k => text.includes(k.toLowerCase()));
+}
+
+function isAlreadySaved(account) {
+    return new Promise(resolve => {
+        chrome.runtime.sendMessage({ action: 'isAccountAlreadySaved', account }, (res) => {
+            if (chrome.runtime.lastError || !res?.success) {
+                resolve(false);
+                return;
+            }
+            resolve(!!res.exists);
+        });
+    });
+}
+
+async function maybeShowSavePrompt(account, source) {
+    if (!account || document.getElementById('passkeeper-save-prompt-root')) return;
+    if (Date.now() - account.timestamp > 5 * 60 * 1000) return;
+    if (!isTopWindow()) {
+        notifyTopWindowPendingSaved();
+        return;
+    }
+    const loggedInPage = isLikelyLoggedInPage();
+    if (!account.submitted && !loggedInPage) return;
+
+    if (await isAlreadySaved(account)) {
+        console.log('[PassKeeper] 账号密码已存在，跳过保存提示');
+        chrome.runtime.sendMessage({ action: 'discardPendingSaveAccount' });
+        return;
+    }
+
+    if (hasLikelyLoginError()) {
+        console.log('[PassKeeper] 检测到登录失败，跳过保存提示');
+        return;
+    }
+
+    const waitForLoginPageToDisappear = source !== '登录后兜底检查' && !loggedInPage;
+    if (waitForLoginPageToDisappear && samePageAsCaptured(account) && hasVisiblePasswordInput()) {
+        console.log('[PassKeeper] 仍停留在登录页，等待后续登录状态变化');
+        return;
+    }
+
+    if (!loggedInPage && hasVisibleLoginFrame(account)) {
+        console.log('[PassKeeper] 登录 iframe 仍可见，等待后续登录状态变化');
+        return;
+    }
+
+    console.log(`[PassKeeper] 使用${source}展示保存提示`);
+    showSavePrompt(account);
+}
+
+function captureCredentials(options = {}) {
     // 检查扩展上下文是否有效
     if (!chrome.runtime?.id) {
         console.warn('[PassKeeper] 扩展已更新，当前页面上下文已失效，请刷新页面。');
         return;
+    }
+
+    if (options.submitted) {
+        clearTimeout(captureTimer);
     }
     
     const { usernameInput, passwordInput } = findInputs();
@@ -453,17 +725,23 @@ function captureCredentials() {
             username: usernameInput.value,
             password: passwordInput.value,
             domain: window.location.origin + window.location.pathname,
+            submitted: !!options.submitted,
             timestamp: Date.now()
         };
         console.log('[PassKeeper] 捕获到账号信息暂存:', account.username);
         chrome.runtime.sendMessage({ action: 'stagePendingSaveAccount', account }, (res) => {
             if (chrome.runtime.lastError || !res?.success) {
-                console.warn('[PassKeeper] 无法暂存账号，可能是扩展已更新或密码库被锁定。', chrome.runtime.lastError || res?.error);
+                const reason = chrome.runtime.lastError?.message || res?.error || 'UNKNOWN_ERROR';
+                console.warn('[PassKeeper] 无法暂存账号:', reason);
                 return;
             }
 
-            // 延迟检查是否登录成功（针对 SPA 页面不刷新的情况）
-            setTimeout(checkLoginSuccessAndPrompt, 2500);
+            if (account.submitted) {
+                scheduleLoginSuccessChecks();
+                scheduleFallbackSavePrompt(account);
+                schedulePostSubmitPromptChecks(account);
+                notifyTopWindowPendingSaved();
+            }
         });
     }
 }
@@ -473,6 +751,9 @@ document.addEventListener('DOMContentLoaded', checkLoginSuccessAndPrompt);
 
 // 如果是动态加载的（比如 content script 晚于 DOMContentLoaded 注入），也可以直接执行一次
 checkLoginSuccessAndPrompt();
+schedulePendingSavePromptPolling();
+scheduleStoredFallbackPrompt();
+scheduleTopWindowPendingPromptChecks();
 
 function checkLoginSuccessAndPrompt() {
     // 检查扩展上下文是否有效
@@ -482,33 +763,77 @@ function checkLoginSuccessAndPrompt() {
         chrome.runtime.sendMessage({ action: 'getPendingSaveAccount' }, (res) => {
             const account = res?.account;
             if (!account) return;
+            if (!account.submitted && !isLikelyLoggedInPage()) return;
             
         // 放宽域名限制：主域名相同即可（比如 login.example.com 跳到 www.example.com）
-        const getRoot = (str) => {
+        const parseUrl = (str) => {
             try {
-                const host = new URL(str.startsWith('http') ? str : 'http://' + str).hostname;
-                return host.split('.').slice(-2).join('.');
+                return new URL(str.startsWith('http') ? str : 'http://' + str);
             } catch(e) {
-                return str;
+                return null;
             }
         };
-        if (getRoot(account.domain) !== getRoot(window.location.href) || Date.now() - account.timestamp > 5 * 60 * 1000) {
+
+        const getRoot = (str) => {
+            const url = parseUrl(str);
+            if (!url) return String(str || '');
+            const host = url.hostname;
+            if (host === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return host;
+            return host.split('.').slice(-2).join('.');
+        };
+
+        const savedUrl = parseUrl(account.domain);
+        const currentUrl = parseUrl(window.location.href);
+        const currentRoot = getRoot(window.location.href);
+        const matchesPrimaryDomain = getRoot(account.domain) === currentRoot;
+        const matchesLoginFrameDomain = account.loginFrameDomain && getRoot(account.loginFrameDomain) === currentRoot;
+
+        if (Date.now() - account.timestamp > 5 * 60 * 1000) {
             chrome.runtime.sendMessage({ action: 'discardPendingSaveAccount' });
             return;
         }
 
-        // 检查页面是否还有可见的密码框。如果有，说明可能还在登录页（登录失败，或者还没跳走）
-        const pwdInputs = Array.from(document.querySelectorAll('input[type="password"]')).filter(isFieldVisible);
-        if (pwdInputs.length > 0) return;
+        if (!matchesPrimaryDomain && !matchesLoginFrameDomain) return;
 
-        console.log('[PassKeeper] 判定登录成功，展示保存提示UI');
-        // 如果没有可见密码框，判定为登录成功，展示提示框
-        showSavePrompt(account);
+        // 地址已变化通常代表登录流程已进入下一页，即使 SPA 仍保留密码组件也应提示保存。
+        const urlChanged = savedUrl && currentUrl
+            ? savedUrl.origin !== currentUrl.origin || savedUrl.pathname !== currentUrl.pathname
+            : account.domain !== window.location.origin + window.location.pathname;
+
+        const pwdInputs = Array.from(document.querySelectorAll('input, textarea')).filter((input) => {
+            if (!isFieldVisible(input)) return false;
+            const meta = `${input.type || ''} ${input.name || ''} ${input.id || ''} ${input.className || ''} ${input.placeholder || ''} ${input.autocomplete || ''}`.toLowerCase();
+            return input.type === 'password'
+                || meta.includes('password')
+                || meta.includes('passwd')
+                || meta.includes('pwd')
+                || meta.includes('密码');
+        });
+        if (pwdInputs.length > 0 && !urlChanged) return;
+
+        console.log('[PassKeeper] 判定登录成功，准备展示保存提示UI', { urlChanged, visiblePasswordInputs: pwdInputs.length });
+        maybeShowSavePrompt(account, '登录成功检查');
         });
     } catch (e) {
         console.warn('[PassKeeper] 无法检查登录状态，可能是扩展已更新，请刷新页面重试。', e);
     }
 }
+
+// SPA 登录常通过 history API 改地址，不会重新加载 content script。
+['pushState', 'replaceState'].forEach((method) => {
+    const original = history[method];
+    history[method] = function(...args) {
+        const result = original.apply(this, args);
+        setTimeout(checkLoginSuccessAndPrompt, 300);
+        return result;
+    };
+});
+window.addEventListener('popstate', () => setTimeout(checkLoginSuccessAndPrompt, 300));
+window.addEventListener('message', (event) => {
+    if (event.data?.source !== 'PassKeeper' || event.data?.type !== 'pending-save-account') return;
+    schedulePendingSavePromptPolling();
+    scheduleStoredFallbackPrompt();
+});
 
 function showSavePrompt(account) {
     if (document.getElementById('passkeeper-save-prompt-root')) return;

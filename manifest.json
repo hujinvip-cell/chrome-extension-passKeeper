@@ -31,7 +31,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["manager.html", "manager.css", "manager.js", "crypto.js", "auth.js"],
+      "resources": ["manager.html", "manager.css", "manager.js", "crypto.js", "auth.js", "domain-utils.js"],
       "matches": ["<all_urls>"]
     }
   ],
@@ -42,7 +42,10 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_end"
+      "run_at": "document_end",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ]
 }
